@@ -1,5 +1,5 @@
 [package]
-name = "vessel"
+name = "phenotype-vessel"
 version = "0.1.0"
 edition = "2021"
 description = "Container utilities"
