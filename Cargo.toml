@@ -1,0 +1,13 @@
+[package]
+name = "vessel"
+version = "0.1.0"
+edition = "2021"
+description = "Container utilities"
+license = "MIT"
+repository = "https://github.com/KooshaPari/vessel"
+
+[dependencies]
+bollard = "0.16"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
