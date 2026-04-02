@@ -1,19 +1,19 @@
+# Pull Request Description
+
 ## Summary
+<!-- What does this PR do? -->
 
-<!-- What changed and why? -->
+## Type of Change
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation update
 
-## Release / versioning
+## Testing
+<!-- How was this tested? -->
 
-- [ ] Does this change affect release notes or `CHANGELOG.md`?
-- [ ] If yes, is the version bump and changelog entry correct?
-- [ ] If yes, does the publish workflow still validate the manifest version?
-
-## Validation
-
-- [ ] Local lint/test/format checks were run when applicable.
-- [ ] Coverage changes were considered for the changed surface.
-- [ ] No workflow, hook, or ownership path drift was introduced.
-
-## Notes
-
-<!-- Add any rollout, risk, or follow-up context here. -->
+## Checklist
+- [ ] Code follows project style guidelines
+- [ ] Self-review completed
+- [ ] Tests added/updated
+- [ ] Documentation updated

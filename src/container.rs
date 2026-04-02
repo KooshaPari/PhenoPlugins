@@ -46,7 +46,7 @@ pub struct Container {
 }
 
 /// Configuration for creating a container
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContainerConfig {
     /// Image to use
     pub image: String,
@@ -58,18 +58,6 @@ pub struct ContainerConfig {
     pub cmd: Option<Vec<String>>,
     /// Working directory
     pub workdir: Option<String>,
-}
-
-impl Default for ContainerConfig {
-    fn default() -> Self {
-        Self {
-            image: String::new(),
-            name: None,
-            env: HashMap::new(),
-            cmd: None,
-            workdir: None,
-        }
-    }
 }
 
 impl Container {

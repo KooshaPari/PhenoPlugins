@@ -169,30 +169,30 @@ impl ContainerRuntime for DockerRuntime {
     }
 
     async fn create_container(&self, config: &ContainerCreateConfig) -> Result<String, String> {
-        let mut args = vec!["create"];
+        let mut args: Vec<String> = vec!["create".to_string()];
         
         if let Some(name) = &config.name {
-            args.push("--name");
-            args.push(name);
+            args.push("--name".to_string());
+            args.push(name.clone());
         }
 
         for env in &config.env {
-            args.push("-e");
-            args.push(&format!("{}={}", env.0, env.1));
+            args.push("-e".to_string());
+            args.push(format!("{}={}", env.0, env.1));
         }
 
         for port in &config.ports {
-            args.push("-p");
-            args.push(&format!("{}:{}", port.host_port, port.container_port));
+            args.push("-p".to_string());
+            args.push(format!("{}:{}", port.host_port, port.container_port));
         }
 
         for volume in &config.volumes {
             let mode = if volume.read_only { ":ro" } else { "" };
-            args.push("-v");
-            args.push(&format!("{}:{}{}", volume.host_path, volume.container_path, mode));
+            args.push("-v".to_string());
+            args.push(format!("{}:{}{}", volume.host_path, volume.container_path, mode));
         }
 
-        args.push(&config.image);
+        args.push(config.image.clone());
 
         let output = tokio::process::Command::new("docker")
             .args(&args)
@@ -352,19 +352,19 @@ impl ContainerRuntime for PodmanRuntime {
     }
 
     async fn create_container(&self, config: &ContainerCreateConfig) -> Result<String, String> {
-        let mut args = vec!["create"];
+        let mut args: Vec<String> = vec!["create".to_string()];
         
         if let Some(name) = &config.name {
-            args.push("--name");
-            args.push(name);
+            args.push("--name".to_string());
+            args.push(name.clone());
         }
 
         for env in &config.env {
-            args.push("-e");
-            args.push(&format!("{}={}", env.0, env.1));
+            args.push("-e".to_string());
+            args.push(format!("{}={}", env.0, env.1));
         }
 
-        args.push(&config.image);
+        args.push(config.image.clone());
 
         let output = tokio::process::Command::new("podman")
             .args(&args)

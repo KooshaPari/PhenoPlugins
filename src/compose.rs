@@ -19,7 +19,7 @@ pub struct ComposeFile {
 }
 
 /// Configuration for a compose service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ComposeService {
     /// Image to use
     pub image: Option<String>,
@@ -89,11 +89,11 @@ impl ComposeFile {
         let mut ordered = Vec::new();
         let mut visited = std::collections::HashSet::new();
 
-        fn visit(
-            service_name: &str,
-            services: &HashMap<String, ComposeService>,
-            ordered: &mut Vec<&ComposeService>,
-            visited: &mut std::collections::HashSet<&str>,
+        fn visit<'a>(
+            service_name: &'a str,
+            services: &'a HashMap<String, ComposeService>,
+            ordered: &mut Vec<&'a ComposeService>,
+            visited: &mut std::collections::HashSet<&'a str>,
         ) {
             if visited.contains(service_name) {
                 return;
@@ -113,7 +113,7 @@ impl ComposeFile {
         }
 
         for name in self.services.keys() {
-            visit(name, &self.services, &mut ordered, &mut visited);
+            visit(name.as_str(), &self.services, &mut ordered, &mut visited);
         }
 
         ordered

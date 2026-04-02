@@ -2,7 +2,8 @@
 //!
 //! Container client for managing containers.
 
-use super::{ContainerRuntime, ContainerInfo, ContainerCreateConfig, VesselError};
+use crate::runtime::{ContainerInfo, ContainerCreateConfig};
+use super::{ContainerRuntime, VesselError};
 use super::image::Image;
 use super::container::{Container, ContainerStatus};
 
@@ -41,7 +42,7 @@ impl<R: ContainerRuntime> ContainerClient<R> {
         self.runtime
             .pull_image(image)
             .await
-            .map_err(|e| VesselError::Runtime(e))?;
+            .map_err(VesselError::Runtime)?;
 
         Ok(Image {
             id: image.to_string(),

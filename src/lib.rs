@@ -13,11 +13,14 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
+//! # async fn quickstart() -> Result<(), Box<dyn std::error::Error>> {
 //! use phenotype_vessel::{ContainerClient, DockerRuntime};
 //!
 //! let client = ContainerClient::new(DockerRuntime);
 //! let image = client.pull_image("nginx:latest").await?;
-//! let container = client.run(&image, "my-container").await?;
+//! let container = client.run("nginx:latest", "my-container").await?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod client;
