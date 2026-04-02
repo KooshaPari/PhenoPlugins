@@ -147,14 +147,14 @@ services:
     #[test]
     fn test_service_dependencies() {
         let mut services = HashMap::new();
-        
+
         let mut web = ComposeService::default();
         web.image = Some("nginx".to_string());
         web.depends_on = Some(vec!["db".to_string()]);
-        
+
         let mut db = ComposeService::default();
         db.image = Some("postgres".to_string());
-        
+
         services.insert("web".to_string(), web);
         services.insert("db".to_string(), db);
 
@@ -169,7 +169,7 @@ services:
         // db should come before web due to dependency
         let db_idx = ordered.iter().position(|s| s.image.as_ref().unwrap() == "postgres");
         let web_idx = ordered.iter().position(|s| s.image.as_ref().unwrap() == "nginx");
-        
+
         assert!(db_idx.is_some() && web_idx.is_some());
     }
 }

@@ -1,5 +1,9 @@
 //! # phenotype-vessel
 //!
+//! @trace VES-001: Agent Runtime
+//! @trace VES-002: Sandbox Isolation
+//! @trace VES-004: Monitoring
+//!
 //! Rust container utilities library providing abstractions over Docker, Podman, and containerd.
 //!
 //! ## Features
@@ -24,15 +28,15 @@
 //! ```
 
 pub mod client;
-pub mod image;
-pub mod container;
 pub mod compose;
+pub mod container;
+pub mod image;
 pub mod runtime;
 
 pub use client::{ContainerClient, ContainerError};
-pub use image::{Image, ImagePullProgress};
-pub use container::{Container, ContainerConfig, ContainerStatus};
 pub use compose::{ComposeFile, ComposeService};
+pub use container::{Container, ContainerConfig, ContainerStatus};
+pub use image::{Image, ImagePullProgress};
 pub use runtime::{ContainerRuntime, DockerRuntime, PodmanRuntime};
 
 use thiserror::Error;

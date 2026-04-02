@@ -68,10 +68,7 @@ impl Container {
 
     /// Check if container is stopped
     pub fn is_stopped(&self) -> bool {
-        matches!(
-            self.status,
-            ContainerStatus::Exited | ContainerStatus::Dead
-        )
+        matches!(self.status, ContainerStatus::Exited | ContainerStatus::Dead)
     }
 
     /// Short ID (first 12 characters)

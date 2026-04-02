@@ -2,10 +2,10 @@
 //!
 //! Container client for managing containers.
 
-use crate::runtime::{ContainerInfo, ContainerCreateConfig};
-use super::{ContainerRuntime, VesselError};
-use super::image::Image;
 use super::container::{Container, ContainerStatus};
+use super::image::Image;
+use super::{ContainerRuntime, VesselError};
+use crate::runtime::{ContainerCreateConfig, ContainerInfo};
 
 /// Unified container client for all runtimes
 #[derive(Debug)]
@@ -31,18 +31,12 @@ impl<R: ContainerRuntime> ContainerClient<R> {
 
     /// List all containers
     pub async fn list_containers(&self) -> Result<Vec<ContainerInfo>, VesselError> {
-        self.runtime
-            .list_containers()
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.list_containers().await.map_err(VesselError::Runtime)
     }
 
     /// Pull an image
     pub async fn pull_image(&self, image: &str) -> Result<Image, VesselError> {
-        self.runtime
-            .pull_image(image)
-            .await
-            .map_err(VesselError::Runtime)?;
+        self.runtime.pull_image(image).await.map_err(VesselError::Runtime)?;
 
         Ok(Image {
             id: image.to_string(),
@@ -54,10 +48,7 @@ impl<R: ContainerRuntime> ContainerClient<R> {
 
     /// Remove an image
     pub async fn remove_image(&self, image: &str) -> Result<(), VesselError> {
-        self.runtime
-            .remove_image(image)
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.remove_image(image).await.map_err(VesselError::Runtime)
     }
 
     /// Create and start a container
@@ -70,16 +61,10 @@ impl<R: ContainerRuntime> ContainerClient<R> {
             volumes: vec![],
         };
 
-        let container_id = self
-            .runtime
-            .create_container(&config)
-            .await
-            .map_err(VesselError::Runtime)?;
+        let container_id =
+            self.runtime.create_container(&config).await.map_err(VesselError::Runtime)?;
 
-        self.runtime
-            .start_container(&container_id)
-            .await
-            .map_err(VesselError::Runtime)?;
+        self.runtime.start_container(&container_id).await.map_err(VesselError::Runtime)?;
 
         Ok(Container {
             id: container_id,
@@ -99,11 +84,8 @@ impl<R: ContainerRuntime> ContainerClient<R> {
             volumes: vec![],
         };
 
-        let container_id = self
-            .runtime
-            .create_container(&config)
-            .await
-            .map_err(VesselError::Runtime)?;
+        let container_id =
+            self.runtime.create_container(&config).await.map_err(VesselError::Runtime)?;
 
         Ok(Container {
             id: container_id,
@@ -115,34 +97,22 @@ impl<R: ContainerRuntime> ContainerClient<R> {
 
     /// Start a container
     pub async fn start(&self, id: &str) -> Result<(), VesselError> {
-        self.runtime
-            .start_container(id)
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.start_container(id).await.map_err(VesselError::Runtime)
     }
 
     /// Stop a container
     pub async fn stop(&self, id: &str) -> Result<(), VesselError> {
-        self.runtime
-            .stop_container(id)
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.stop_container(id).await.map_err(VesselError::Runtime)
     }
 
     /// Remove a container
     pub async fn rm(&self, id: &str) -> Result<(), VesselError> {
-        self.runtime
-            .remove_container(id)
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.remove_container(id).await.map_err(VesselError::Runtime)
     }
 
     /// Get container logs
     pub async fn logs(&self, id: &str) -> Result<String, VesselError> {
-        self.runtime
-            .logs(id)
-            .await
-            .map_err(VesselError::Runtime)
+        self.runtime.logs(id).await.map_err(VesselError::Runtime)
     }
 }
 

@@ -109,7 +109,12 @@ impl ContainerRuntime for DockerRuntime {
 
     async fn list_containers(&self) -> Result<Vec<ContainerInfo>, String> {
         let output = tokio::process::Command::new("docker")
-            .args(["ps", "-a", "--format", "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.CreatedAt}}"])
+            .args([
+                "ps",
+                "-a",
+                "--format",
+                "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.CreatedAt}}",
+            ])
             .output()
             .await
             .map_err(|e| e.to_string())?;
@@ -170,7 +175,7 @@ impl ContainerRuntime for DockerRuntime {
 
     async fn create_container(&self, config: &ContainerCreateConfig) -> Result<String, String> {
         let mut args: Vec<String> = vec!["create".to_string()];
-        
+
         if let Some(name) = &config.name {
             args.push("--name".to_string());
             args.push(name.clone());
@@ -353,7 +358,7 @@ impl ContainerRuntime for PodmanRuntime {
 
     async fn create_container(&self, config: &ContainerCreateConfig) -> Result<String, String> {
         let mut args: Vec<String> = vec!["create".to_string()];
-        
+
         if let Some(name) = &config.name {
             args.push("--name".to_string());
             args.push(name.clone());
@@ -454,7 +459,7 @@ mod tests {
     fn test_container_create_config() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
-        
+
         let config = ContainerCreateConfig {
             image: "nginx:latest".to_string(),
             name: Some("test".to_string()),
@@ -462,7 +467,7 @@ mod tests {
             ports: vec![],
             volumes: vec![],
         };
-        
+
         assert_eq!(config.image, "nginx:latest");
         assert_eq!(config.name, Some("test".to_string()));
     }

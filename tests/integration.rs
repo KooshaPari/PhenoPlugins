@@ -6,14 +6,14 @@
 //! Traces to: FR-VESSEL-INTEGRATION-001
 
 use async_trait::async_trait;
+use phenotype_vessel::client::ContainerClient;
+use phenotype_vessel::runtime::{
+    ContainerCreateConfig, ContainerInfo, ContainerRuntime, DockerRuntime, PodmanRuntime,
+    PortMapping, Protocol, VolumeMapping,
+};
+use phenotype_vessel::{Container, ContainerStatus, Image, VesselError};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use phenotype_vessel::runtime::{
-    ContainerRuntime, ContainerInfo, ContainerCreateConfig, PortMapping, Protocol,
-    VolumeMapping, DockerRuntime, PodmanRuntime,
-};
-use phenotype_vessel::client::ContainerClient;
-use phenotype_vessel::{Container, ContainerStatus, VesselError, Image};
 
 // ============================================================================
 // Mock Runtime for Testing
@@ -148,9 +148,7 @@ impl ContainerRuntime for MockRuntime {
 
 fn rand_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap();
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     format!("{:x}", duration.as_nanos())
 }
 
@@ -297,10 +295,7 @@ async fn test_vessel_error_types() {
     // The #[error(...)] attribute uses "Image error" not "ImagePullFailed"
     assert!(display.contains("Image error"));
 
-    let io_error = VesselError::Io(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "test error"
-    ));
+    let io_error = VesselError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test error"));
     let display = format!("{}", io_error);
     assert!(display.contains("IO error"));
 }
@@ -312,11 +307,7 @@ async fn test_vessel_error_types() {
 // Traces to: FR-VESSEL-INTEGRATION-013
 #[test]
 fn test_port_mapping_creation() {
-    let mapping = PortMapping {
-        host_port: 8080,
-        container_port: 80,
-        protocol: Protocol::Tcp,
-    };
+    let mapping = PortMapping { host_port: 8080, container_port: 80, protocol: Protocol::Tcp };
 
     assert_eq!(mapping.host_port, 8080);
     assert_eq!(mapping.container_port, 80);
@@ -470,20 +461,12 @@ fn test_container_create_config_with_env() {
         image: "postgres:15".to_string(),
         name: Some("test-db".to_string()),
         env,
-        ports: vec![
-            PortMapping {
-                host_port: 5432,
-                container_port: 5432,
-                protocol: Protocol::Tcp,
-            }
-        ],
-        volumes: vec![
-            VolumeMapping {
-                host_path: "/tmp/data".to_string(),
-                container_path: "/var/lib/postgresql/data".to_string(),
-                read_only: false,
-            }
-        ],
+        ports: vec![PortMapping { host_port: 5432, container_port: 5432, protocol: Protocol::Tcp }],
+        volumes: vec![VolumeMapping {
+            host_path: "/tmp/data".to_string(),
+            container_path: "/var/lib/postgresql/data".to_string(),
+            read_only: false,
+        }],
     };
 
     assert_eq!(config.env.len(), 2);
