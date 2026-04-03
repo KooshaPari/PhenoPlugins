@@ -3,6 +3,7 @@ members = [
     "crates/pheno-plugin-core",
     "crates/pheno-plugin-git",
     "crates/pheno-plugin-sqlite",
+    "crates/pheno-plugin-vessel",
 ]
 resolver = "2"
 

@@ -13,6 +13,7 @@ PhenoPlugins provides the foundation for extensible plugin architectures across 
 | `pheno-plugin-core` | Plugin traits, registry, error handling |
 | `pheno-plugin-git` | Git VCS adapter plugin |
 | `pheno-plugin-sqlite` | SQLite storage adapter plugin |
+| `pheno-plugin-vessel` | Container/storage abstraction plugin |
 
 ## Architecture
 
@@ -42,6 +43,7 @@ PhenoPlugins provides the foundation for extensible plugin architectures across 
 - `agileplus-plugin-core/` → `pheno-plugin-core/`
 - `agileplus-plugin-git/` → `pheno-plugin-git/`
 - `agileplus-plugin-sqlite/` → `pheno-plugin-sqlite/`
+- `phenoVessel/` → `pheno-plugin-vessel/`
 
 ## License
 
