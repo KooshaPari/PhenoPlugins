@@ -37,6 +37,10 @@ PhenoPlugins provides the foundation for extensible plugin architectures across 
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Documentation
+
+- [SPEC.md](./SPEC.md) - Project specification
+
 ## Migrated From
 
 - `agileplus-plugin-core/` → `pheno-plugin-core/`
