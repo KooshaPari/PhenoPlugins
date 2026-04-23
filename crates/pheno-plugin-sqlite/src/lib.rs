@@ -52,6 +52,7 @@ impl SqliteStoragePlugin {
     }
 
     /// Create an in-memory database for testing.
+    // kept: public constructor used by downstream crates' test suites
     #[allow(dead_code)]
     pub fn in_memory() -> PluginResult<Self> {
         let conn = Connection::open_in_memory()
@@ -393,12 +394,14 @@ impl StoragePlugin for SqliteStoragePlugin {
 
 impl SqliteStoragePlugin {
     /// Expose the underlying connection for advanced use cases.
+    // kept: public accessor for downstream consumers needing raw rusqlite access
     #[allow(dead_code)]
     pub fn connection(&self) -> Arc<Mutex<Connection>> {
         Arc::clone(&self.conn)
     }
 
     /// Get the database path.
+    // kept: public accessor for downstream diagnostics and introspection
     #[allow(dead_code)]
     pub fn db_path(&self) -> &Path {
         &self.db_path
