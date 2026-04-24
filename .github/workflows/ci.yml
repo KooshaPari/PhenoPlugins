@@ -17,7 +17,7 @@ concurrency:
 jobs:
   rust-quality:
     name: Rust Quality (reusable)
-    uses: KooshaPari/phenotype-infrakit/.github/workflows/reusable/rust-quality.yml@main
+    uses: KooshaPari/phenoShared/.github/workflows/reusable/rust-quality.yml@f5343b1d349e523df2fe44f94d8f25d2ec320c6d
     with:
       rust-version: stable
       coverage-threshold: 0
@@ -25,7 +25,7 @@ jobs:
 
   security-scan:
     name: Security Scan (reusable)
-    uses: KooshaPari/phenotype-infrakit/.github/workflows/reusable/security-scan.yml@main
+    uses: KooshaPari/phenoShared/.github/workflows/reusable/security-scan.yml@f5343b1d349e523df2fe44f94d8f25d2ec320c6d
     with:
       cargo-audit: "true"
       cargo-deny: "false"
