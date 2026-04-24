@@ -29,5 +29,5 @@ jobs:
     with:
       cargo-audit: "true"
       cargo-deny: "false"
-      gitleaks: "false"
+      trufflehog: "false"
       working-directory: .
