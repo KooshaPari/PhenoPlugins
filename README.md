@@ -1,5 +1,10 @@
 # PhenoPlugins
 
+[![Build](https://img.shields.io/github/actions/workflow/status/KooshaPari/PhenoPlugins/ci.yml?branch=main&label=build)](https://github.com/KooshaPari/PhenoPlugins/actions)
+[![Release](https://img.shields.io/github/v/release/KooshaPari/PhenoPlugins?include_prereleases&sort=semver)](https://github.com/KooshaPari/PhenoPlugins/releases)
+[![License](https://img.shields.io/github/license/KooshaPari/PhenoPlugins)](LICENSE)
+[![Phenotype](https://img.shields.io/badge/Phenotype-org-blueviolet)](https://github.com/KooshaPari)
+
 **Status:** maintenance
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
