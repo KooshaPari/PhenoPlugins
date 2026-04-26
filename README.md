@@ -1,5 +1,7 @@
 # PhenoPlugins
 
+**Status:** maintenance
+
 Unified plugin system and extension architecture for the Phenotype ecosystem. Provides trait-based plugin interface, dynamic registry, lifecycle management, and battle-tested adapters for Git, SQLite, and container/storage abstractions.
 
 ## Overview
