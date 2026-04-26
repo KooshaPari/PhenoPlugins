@@ -2,6 +2,10 @@
 
 **Status:** maintenance
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/KooshaPari/PhenoPlugins/actions/workflows/ci.yml/badge.svg)](https://github.com/KooshaPari/PhenoPlugins/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
+
 Unified plugin system and extension architecture for the Phenotype ecosystem. Provides trait-based plugin interface, dynamic registry, lifecycle management, and battle-tested adapters for Git, SQLite, and container/storage abstractions.
 
 ## Overview
