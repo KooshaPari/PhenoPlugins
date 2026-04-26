@@ -204,6 +204,10 @@ fn test_plugin_host() {
 - **Lifecycle overhead**: <1ms per operation
 - **Concurrent plugins**: 100+ supported
 
-## License & Governance
+## License
 
-Licensed under Apache 2.0. See `LICENSE`. Governance in `CLAUDE.md`. Functional requirements and FR-to-test mapping in `FUNCTIONAL_REQUIREMENTS.md`. Architecture decisions in `docs/SPEC.md` and `docs/adr/`.
+MIT — see [LICENSE](./LICENSE).
+
+## Governance
+
+Governance in `CLAUDE.md`. Functional requirements and FR-to-test mapping in `FUNCTIONAL_REQUIREMENTS.md`. Architecture decisions in `docs/SPEC.md` and `docs/adr/`.
