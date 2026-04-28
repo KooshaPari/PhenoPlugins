@@ -1,0 +1,4 @@
+msrv = "1.75"
+avoid-breaking-exported-api = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
