@@ -1,11 +1,11 @@
 //! Git adapter plugin for AgilePlus.
 //!
-//! Implements [`agileplus_plugin_core::traits::VcsPlugin`] using git2.
+//! Implements [`pheno_plugin_core::traits::VcsPlugin`] using git2.
 //!
 //! ## Architecture
 //!
 //! This crate follows the Hexagonal Architecture pattern:
-//! - **Port**: `VcsPlugin` trait from `agileplus-plugin-core`
+//! - **Port**: `VcsPlugin` trait from `pheno-plugin-core`
 //! - **Adapter**: `GitAdapter` struct implementing the port
 
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use git2::{Repository, BranchType};
 
-use agileplus_plugin_core::{
+use pheno_plugin_core::{
     error::{PluginError, PluginResult},
     traits::{
         AdapterPlugin, ConflictInfo, FeatureArtifacts, MergeResult, PluginConfig, VcsPlugin,

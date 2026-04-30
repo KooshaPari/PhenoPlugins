@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pheno-plugin-core = { path = "../pheno-plugin-core" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1.0"
+serde_json = "1.0"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
