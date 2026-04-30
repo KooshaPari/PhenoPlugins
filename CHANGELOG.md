@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
 ## 📚 Documentation
 - Docs(readme): expand README.md with purpose, stack, quick-start, related projects (`b63d597`)
 - Docs: add PLAN.md (`a294e6d`)
