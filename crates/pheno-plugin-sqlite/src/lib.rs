@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rusqlite::{params, Connection};
 
-use agileplus_plugin_core::{
+use pheno_plugin_core::{
     error::{PluginError, PluginResult},
     traits::{AdapterPlugin, StoragePlugin},
 };
@@ -141,7 +141,7 @@ impl AdapterPlugin for SqliteStoragePlugin {
         env!("CARGO_PKG_VERSION")
     }
 
-    fn initialize(&self, _config: agileplus_plugin_core::traits::PluginConfig) -> PluginResult<()> {
+    fn initialize(&self, _config: pheno_plugin_core::traits::PluginConfig) -> PluginResult<()> {
         // Ensure database is accessible by checking the schema
         let conn = self.lock()?;
         conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn test_new_and_init() {
         let plugin = create_test_plugin();
-        plugin.initialize(agileplus_plugin_core::traits::PluginConfig {
+        plugin.initialize(pheno_plugin_core::traits::PluginConfig {
             name: "test".to_string(),
             version: "0.1.0".to_string(),
             adapter_config: serde_json::json!({}),
