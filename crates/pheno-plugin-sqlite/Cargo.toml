@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 pheno-plugin-core = { path = "../pheno-plugin-core" }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 thiserror = "1.0"
 serde_json = "1.0"
 async-trait = "0.1"
