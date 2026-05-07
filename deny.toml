@@ -32,7 +32,7 @@ allow = [
 
 [bans]
 multiple-versions = "warn"
-wildcards = "warn"
+wildcards = "deny"
 
 [sources]
 unknown-git = "deny"
