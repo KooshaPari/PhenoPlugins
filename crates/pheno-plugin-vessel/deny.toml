@@ -25,6 +25,12 @@ allow = [
 [sources]
 unknown-git = "deny"
 
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+workspace-default-features = "warn"
+
 [advisories]
 ignore = [
     # No safe upgrade available - rustls-pemfile deprecated, migration requires async-nats update
