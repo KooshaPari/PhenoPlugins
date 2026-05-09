@@ -11,7 +11,6 @@ allow = [
     "BSD-3-Clause",
     "BSD-3-Clause-Clear",
     "CC0-1.0",
-<<<<<<< HEAD
     "CC-BY-SA-4.0",
     "GPL-3.0-only",
     "ISC",
@@ -25,9 +24,6 @@ allow = [
     "CDLA-Permissive-2.0",
     "Unlicense",
     "WTFPL",
-=======
-    "Unicode-3.0",
->>>>>>> b175c4a (chore: update GitHub workflows and Cargo dependencies)
 ]
 
 [bans]

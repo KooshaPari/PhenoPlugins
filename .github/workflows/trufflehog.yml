@@ -7,21 +7,16 @@ on:
   push:
     branches: [main]
   pull_request:
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   trufflehog:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-      - uses: trufflehog/actions/setup@3fc0c2a225a9d249aea9b97a1c40c40a5ff7e0c0 # pinned from @main
-      - run: trufflehog github --only-verified --no-update
-        env:
-          GH_TOKEN: \${{ github.token }}
+      - uses: actions/setup-go@0a12ed1d6a96ea1874e4eed0c46cd1372a62409a # v5.2.0
+        with:
+          go-version: stable
+      - run: go install github.com/trufflesecurity/trufflehog/v3@v3.95.2
+      - run: trufflehog filesystem . --only-verified --no-update
