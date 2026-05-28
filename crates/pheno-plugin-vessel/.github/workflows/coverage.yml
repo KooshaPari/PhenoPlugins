@@ -2,9 +2,11 @@ name: Coverage
 on: [push, pull_request]
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
       - name: Run coverage
         run: |
           # Language-specific coverage commands
