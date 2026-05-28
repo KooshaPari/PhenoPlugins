@@ -7,11 +7,13 @@ on:
     - cron: '0 0 * * *'
 jobs:
   trivy:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@314ff8b43182423b84c50b1670b0e10f858f2d98
         with:
           scan-type: 'fs'
           severity: 'CRITICAL,HIGH'

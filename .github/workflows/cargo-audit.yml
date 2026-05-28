@@ -16,7 +16,9 @@ on:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
