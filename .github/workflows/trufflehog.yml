@@ -21,4 +21,4 @@ jobs:
         with:
           go-version: stable
       - run: go install github.com/trufflesecurity/trufflehog/v3@v3.95.2
-      - run: trufflehog filesystem . --only-verified --no-update
+      - run: trufflehog git file://. --only-verified --no-update
