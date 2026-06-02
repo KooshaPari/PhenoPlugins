@@ -1,0 +1,8 @@
+{
+  "catalog_version": 1,
+  "description": "Authoritative catalog of published PhenoPlugins manifests.",
+  "plugins": [
+    { "name": "git", "kind": "vcs", "manifest": "git.manifest.json" },
+    { "name": "sqlite", "kind": "storage", "manifest": "sqlite.manifest.json" }
+  ]
+}
