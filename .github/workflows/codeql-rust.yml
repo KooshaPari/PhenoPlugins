@@ -3,8 +3,14 @@ name: CodeQL (Rust)
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/workflows/**"
+      - "**/*.md"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - ".github/workflows/**"
+      - "**/*.md"
   schedule:
     - cron: '17 4 * * 2'
   workflow_dispatch:
