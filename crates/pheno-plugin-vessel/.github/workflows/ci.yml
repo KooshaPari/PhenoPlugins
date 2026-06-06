@@ -21,7 +21,7 @@ jobs:
 
       
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1d8ad32f7c5b4a9db24d5d00b4e0a3d9c7f5c7b2
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: $123matrix.rust-version125
 
