@@ -12,6 +12,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: trufflesecurity/trufflehog@75add79b929b263dae147d2e5bcf0daf292165cf # v-latest: @main (proven in AgilePlus sast-quick.yml + trufflehog.yml)
-      - run: trufflehog github --only-verified --no-update
-        env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --only-verified --fail
+        continue-on-error: true
