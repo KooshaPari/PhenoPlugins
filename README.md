@@ -1,3 +1,6 @@
+> **Work state:** ACTIVE · **Progress:** `███████░░░ 70%`
+> Plugin framework: manifest schema + catalog interop contract landed (PR #84) · updated 2026-06-02
+
 > **Pinned references (Phenotype-org)**
 > - MSRV: see rust-toolchain.toml
 > - cargo-deny config: see deny.toml
