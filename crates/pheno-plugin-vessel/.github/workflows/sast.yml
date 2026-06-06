@@ -6,10 +6,12 @@ on:
   schedule: [{cron: "0 2 * * *"}]
 jobs:
   codeql:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init-action@v3
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
+      - uses: github/codeql-action/init-action@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3
         with:
           languages: [typescript, python, rust, go]
       - uses: github/codeql-action/autobuild

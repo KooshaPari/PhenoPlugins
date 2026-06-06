@@ -11,12 +11,14 @@ on:
 jobs:
   # 1. Dependency Vulnerability Scan (Snyk-style)
   dependency-scan:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
       
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@314ff8b43182423b84c50b1670b0e10f858f2d98
         with:
           scan-type: 'fs'
           ignore-unfixed: true
@@ -25,32 +27,32 @@ jobs:
           severity: 'CRITICAL,HIGH'
       
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v2
         with:
           sarif_file: 'trivy-results.sarif'
 
   # 2. Secret Scanning (GitLeaks)
   secret-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
         with:
           fetch-depth: 0
       
       - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # 3. Code Security Analysis (CodeQL)
   codeql-analysis:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         language: ['rust', 'go', 'python', 'typescript']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
       
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v2
@@ -65,22 +67,22 @@ jobs:
 
   # 4. Container Security (if Dockerfile exists)
   container-scan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: hashFiles('**/Dockerfile') != ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
       
       - name: Build image
         run: docker build -t app:${{ github.sha }} .
       
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@314ff8b43182423b84c50b1670b0e10f858f2d98
         with:
           image-ref: 'app:${{ github.sha }}'
           format: 'sarif'
           output: 'trivy-image-results.sarif'
       
       - name: Upload image scan results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v2
         with:
           sarif_file: 'trivy-image-results.sarif'

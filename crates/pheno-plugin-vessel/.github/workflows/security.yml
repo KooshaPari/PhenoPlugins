@@ -21,15 +21,15 @@ jobs:
   # Secret Scanning
   secrets:
     name: Secret Detection
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
         with:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -38,12 +38,12 @@ jobs:
   # SAST Scanning
   sast:
     name: SAST Analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
 
       
       - name: Setup Rust
@@ -62,10 +62,10 @@ jobs:
   # Dependency Vulnerability Scanning
   dependencies:
     name: Dependency Audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
 
       
       - name: Setup Rust
@@ -81,24 +81,24 @@ jobs:
   # Container Scanning (if Dockerfile exists)
   container:
     name: Container Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ hashFiles('Dockerfile') != '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
 
       - name: Build image
         run: docker build -t ${{ github.event.repository.name }}:scan .
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@314ff8b43182423b84c50b1670b0e10f858f2d98
         with:
           image-ref: '${{ github.event.repository.name }}:scan'
           format: 'sarif'
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a  # v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'

@@ -8,18 +8,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
     
     strategy:
       matrix:
         rust-version: ['1.70', 'stable']
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4
 
       
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@1d8ad32f7c5b4a9db24d5d00b4e0a3d9c7f5c7b2
         with:
           toolchain: $123matrix.rust-version125
 
@@ -34,5 +36,5 @@ jobs:
       
 
   phenotype-validate:
-    runs-on: ubuntu-latest
-    uses: KooshaPari/phenotypeActions/.github/workflows/validate-governance.yml@main
+    runs-on: ubuntu-24.04
+    uses: KooshaPari/phenotypeActions/.github/workflows/validate-governance.yml@48772d7560c964fff01a209742429f24283e96cf
