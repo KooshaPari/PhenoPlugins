@@ -1,3 +1,14 @@
+## Work State
+
+| Field | Value |
+|---|---|
+| Last commit | 2026-06-08 |
+| Open issues | 6 |
+| Open PRs | 4 |
+| Focus | BDD test-support + shared scorecard |
+
+Progress: █████░░░░░ 50%
+
 > **Work state:** ACTIVE · **Progress:** `███████░░░ 70%`
 > Phenotype-org plugin framework; manifest schema + catalog landed (interop contract w/ Agentora) · updated 2026-06-02
 
