@@ -16,7 +16,6 @@ async-trait = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
-phenotype-test-support = { path = "../../../phenoShared/crates/phenotype-test-support" }
 
 [[bench]]
 name = "perf"
