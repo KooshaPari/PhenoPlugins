@@ -524,4 +524,11 @@ mod tests {
             assert_eq!(trail[0]["entry_type"], "created");
         });
     }
+
+    #[test]
+    fn test_db_path_accessor() {
+        // In-memory plugin should report ":memory:" as its path
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.db_path(), Path::new(":memory:"));
+    }
 }
