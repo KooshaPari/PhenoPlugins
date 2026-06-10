@@ -16,7 +16,9 @@ async-trait = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
-phenotype-test-support = { path = "../../../phenoShared/crates/phenotype-test-support" }
+cucumber = "0.21"
+uuid = { version = "1.11", features = ["v4"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "perf"

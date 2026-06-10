@@ -148,12 +148,16 @@ services:
     fn test_service_dependencies() {
         let mut services = HashMap::new();
 
-        let mut web = ComposeService::default();
-        web.image = Some("nginx".to_string());
-        web.depends_on = Some(vec!["db".to_string()]);
+        let web = ComposeService {
+            image: Some("nginx".to_string()),
+            depends_on: Some(vec!["db".to_string()]),
+            ..Default::default()
+        };
 
-        let mut db = ComposeService::default();
-        db.image = Some("postgres".to_string());
+        let db = ComposeService {
+            image: Some("postgres".to_string()),
+            ..Default::default()
+        };
 
         services.insert("web".to_string(), web);
         services.insert("db".to_string(), db);

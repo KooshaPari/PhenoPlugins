@@ -80,7 +80,7 @@ impl GitAdapter {
         let name = if head.is_branch() {
             head.name()
                 .map(|n| n.strip_prefix("refs/heads/").unwrap_or(n).to_string())
-                .unwrap_or_else(|| "main".to_string())
+                .unwrap_or_else(|_| "main".to_string())
         } else {
             "main".to_string()
         };
@@ -159,8 +159,8 @@ impl VcsPlugin for GitAdapter {
 
         for name_bytes in names.iter() {
             let name = match name_bytes {
-                Some(n) => n,
-                None => continue,
+                Ok(Some(n)) => n,
+                Ok(None) | Err(_) => continue,
             };
 
             let wt = match repo.find_worktree(name) {
@@ -188,7 +188,11 @@ impl VcsPlugin for GitAdapter {
 
             // Get branch name from worktree HEAD
             let branch = if let Ok(wt_repo) = Repository::open(&path) {
-                wt_repo.head().ok().and_then(|h| h.shorthand().map(String::from)).unwrap_or_else(|| name_str.clone())
+                wt_repo
+                    .head()
+                    .ok()
+                    .and_then(|h| h.shorthand().ok().map(String::from))
+                    .unwrap_or_else(|| name_str.clone())
             } else {
                 name_str.clone()
             };
@@ -215,8 +219,8 @@ impl VcsPlugin for GitAdapter {
         let mut found_name: Option<String> = None;
         for name_bytes in names.iter() {
             let name = match name_bytes {
-                Some(n) => n,
-                None => continue,
+                Ok(Some(n)) => n,
+                Ok(None) | Err(_) => continue,
             };
             if let Ok(wt) = repo.find_worktree(name) {
                 let wt_path = PathBuf::from(wt.path());
@@ -503,7 +507,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_repo() -> PluginResult<(TempDir, GitAdapter)> {
-        let temp_dir = TempDir::new().map_err(|e| PluginError::Io(e))?;
+        let temp_dir = TempDir::new().map_err(PluginError::Io)?;
         let repo_path = temp_dir.path();
         Repository::init(repo_path).map_err(|e| PluginError::Initialization(format!("Failed to init repo: {}", e)))?;
         let adapter = GitAdapter::new(repo_path)?;
