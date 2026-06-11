@@ -1,0 +1,13 @@
+[package]
+name = "ports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hexagonal port traits and adapter implementations for the plugin loader subsystem (T70: PhenoPlugins R4 wave)."
+
+[dependencies]
+async-trait = "0.1"
+thiserror = "2.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -4,6 +4,7 @@ members = [
     "crates/pheno-plugin-git",
     "crates/pheno-plugin-sqlite",
     "crates/pheno-plugin-vessel",
+    "ports",
 ]
 resolver = "2"
 
