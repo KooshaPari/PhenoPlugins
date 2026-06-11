@@ -564,4 +564,74 @@ mod tests {
             assert!(plugin.get_audit_trail(9999).await.unwrap().is_empty());
         });
     }
+
+    #[test]
+    fn test_sqlite_error_variants() {
+        // 1. Migration variant
+        let migration_err = SqliteError::Migration("oops".to_string());
+        assert_eq!(migration_err.to_string(), "Migration error: oops");
+        assert!(format!("{:?}", migration_err).contains("Migration"));
+
+        // 2. Connection variant
+        let connection_err = SqliteError::Connection("bad path".to_string());
+        assert_eq!(connection_err.to_string(), "Connection error: bad path");
+
+        // 3. JSON variant via From
+        let json_err = serde_json::from_str::<i32>("not-a-number").unwrap_err();
+        let json_wrapped: SqliteError = json_err.into();
+        assert!(
+            json_wrapped.to_string().starts_with("JSON serialization error:"),
+            "expected JSON variant Display to start with 'JSON serialization error:', got: {}",
+            json_wrapped
+        );
+
+        // 4. SQLite variant via From
+        let sqlite_err = rusqlite::Error::InvalidQuery;
+        let sqlite_wrapped: SqliteError = sqlite_err.into();
+        assert!(
+            sqlite_wrapped.to_string().starts_with("SQLite error:"),
+            "expected SQLite variant Display to start with 'SQLite error:', got: {}",
+            sqlite_wrapped
+        );
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let plugin = create_test_plugin();
+        let debug = format!("{:?}", plugin);
+        assert!(debug.contains("SqliteStoragePlugin"));
+        assert!(debug.contains(":memory:"));
+    }
+
+    #[test]
+    fn test_validation_errors() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Missing slug on create_feature should yield PluginError::Validation("missing slug")
+            let result = plugin
+                .create_feature(&serde_json::json!({"name": "x"}))
+                .await;
+            let err = result.expect_err("expected validation error for missing slug");
+            let msg = format!("{}", err);
+            assert!(
+                msg.contains("missing slug"),
+                "expected error to contain 'missing slug', got: {}",
+                msg
+            );
+
+            // Missing feature_id on create_work_package should yield PluginError::Validation("missing feature_id")
+            let result = plugin
+                .create_work_package(&serde_json::json!({"title": "x"}))
+                .await;
+            let err = result.expect_err("expected validation error for missing feature_id");
+            let msg = format!("{}", err);
+            assert!(
+                msg.contains("missing feature_id"),
+                "expected error to contain 'missing feature_id', got: {}",
+                msg
+            );
+        });
+    }
 }
