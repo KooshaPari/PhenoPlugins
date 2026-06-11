@@ -39,19 +39,17 @@ impl PluginRegistry {
     ///
     /// After initialization, no new plugins can be registered.
     pub fn finalize(&self) -> PluginResult<()> {
-        let mut initialized = self.initialized.write().map_err(|_| {
-            PluginError::Initialization("Poisoned lock".to_string())
-        })?;
+        let mut initialized = self
+            .initialized
+            .write()
+            .map_err(|_| PluginError::Initialization("Poisoned lock".to_string()))?;
         *initialized = true;
         Ok(())
     }
 
     /// Check if registry is finalized.
     pub fn is_finalized(&self) -> bool {
-        self.initialized
-            .read()
-            .map(|g| *g)
-            .unwrap_or(false)
+        self.initialized.read().map(|g| *g).unwrap_or(false)
     }
 
     // -- VCS plugin management --
@@ -65,9 +63,10 @@ impl PluginRegistry {
         }
 
         let name = plugin.name().to_string();
-        let mut vcs = self.vcs.write().map_err(|_| {
-            PluginError::Initialization("Poisoned lock".to_string())
-        })?;
+        let mut vcs = self
+            .vcs
+            .write()
+            .map_err(|_| PluginError::Initialization("Poisoned lock".to_string()))?;
 
         if vcs.contains_key(&name) {
             return Err(PluginError::AlreadyRegistered(format!(
@@ -82,15 +81,15 @@ impl PluginRegistry {
 
     /// Get a VCS adapter by name.
     pub fn vcs(&self, name: &str) -> Option<Arc<dyn VcsPlugin>> {
-        self.vcs
-            .read()
-            .ok()
-            .and_then(|g| g.get(name).cloned())
+        self.vcs.read().ok().and_then(|g| g.get(name).cloned())
     }
 
     /// Get all registered VCS adapter names.
     pub fn vcs_adapters(&self) -> Vec<String> {
-        self.vcs.read().map(|g| g.keys().cloned().collect()).unwrap_or_default()
+        self.vcs
+            .read()
+            .map(|g| g.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     // -- Storage plugin management --
@@ -104,9 +103,10 @@ impl PluginRegistry {
         }
 
         let name = plugin.name().to_string();
-        let mut storage = self.storage.write().map_err(|_| {
-            PluginError::Initialization("Poisoned lock".to_string())
-        })?;
+        let mut storage = self
+            .storage
+            .write()
+            .map_err(|_| PluginError::Initialization("Poisoned lock".to_string()))?;
 
         if storage.contains_key(&name) {
             return Err(PluginError::AlreadyRegistered(format!(
@@ -121,15 +121,15 @@ impl PluginRegistry {
 
     /// Get a storage adapter by name.
     pub fn storage(&self, name: &str) -> Option<Arc<dyn StoragePlugin>> {
-        self.storage
-            .read()
-            .ok()
-            .and_then(|g| g.get(name).cloned())
+        self.storage.read().ok().and_then(|g| g.get(name).cloned())
     }
 
     /// Get all registered storage adapter names.
     pub fn storage_adapters(&self) -> Vec<String> {
-        self.storage.read().map(|g| g.keys().cloned().collect()).unwrap_or_default()
+        self.storage
+            .read()
+            .map(|g| g.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     // -- Health checks --
@@ -174,16 +174,20 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
     use crate::traits::{
         AdapterPlugin, ConflictInfo, FeatureArtifacts, MergeResult, VcsPlugin, WorktreeInfo,
     };
+    use std::path::{Path, PathBuf};
 
     struct MockVcsPlugin;
 
     impl AdapterPlugin for MockVcsPlugin {
-        fn name(&self) -> &str { "mock-vcs" }
-        fn version(&self) -> &str { "0.1.0" }
+        fn name(&self) -> &str {
+            "mock-vcs"
+        }
+        fn version(&self) -> &str {
+            "0.1.0"
+        }
         fn initialize(&self, _config: crate::traits::PluginConfig) -> PluginResult<()> {
             Ok(())
         }
@@ -207,7 +211,11 @@ mod tests {
             Ok(())
         }
         async fn merge_to_target(&self, _: &str, _: &str) -> PluginResult<MergeResult> {
-            Ok(MergeResult { success: true, conflicts: vec![], merged_commit: None })
+            Ok(MergeResult {
+                success: true,
+                conflicts: vec![],
+                merged_commit: None,
+            })
         }
         async fn detect_conflicts(&self, _: &str, _: &str) -> PluginResult<Vec<ConflictInfo>> {
             Ok(vec![])
@@ -222,7 +230,11 @@ mod tests {
             Ok(false)
         }
         async fn scan_feature_artifacts(&self, _: &str) -> PluginResult<FeatureArtifacts> {
-            Ok(FeatureArtifacts { meta_json: None, audit_chain: None, evidence_paths: vec![] })
+            Ok(FeatureArtifacts {
+                meta_json: None,
+                audit_chain: None,
+                evidence_paths: vec![],
+            })
         }
     }
 
@@ -271,23 +283,52 @@ mod tests {
     struct MockStoragePlugin;
 
     impl AdapterPlugin for MockStoragePlugin {
-        fn name(&self) -> &str { "mock-storage" }
-        fn version(&self) -> &str { "0.1.0" }
-        fn initialize(&self, _config: crate::traits::PluginConfig) -> PluginResult<()> { Ok(()) }
+        fn name(&self) -> &str {
+            "mock-storage"
+        }
+        fn version(&self) -> &str {
+            "0.1.0"
+        }
+        fn initialize(&self, _config: crate::traits::PluginConfig) -> PluginResult<()> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]
     impl StoragePlugin for MockStoragePlugin {
-        async fn create_feature(&self, _feature: &serde_json::Value) -> PluginResult<i64> { Ok(1) }
-        async fn get_feature_by_slug(&self, _slug: &str) -> PluginResult<Option<serde_json::Value>> { Ok(None) }
-        async fn get_feature_by_id(&self, _id: i64) -> PluginResult<Option<serde_json::Value>> { Ok(None) }
-        async fn update_feature_state(&self, _id: i64, _state: &str) -> PluginResult<()> { Ok(()) }
-        async fn list_all_features(&self) -> PluginResult<Vec<serde_json::Value>> { Ok(vec![]) }
-        async fn create_work_package(&self, _wp: &serde_json::Value) -> PluginResult<i64> { Ok(1) }
-        async fn get_work_package(&self, _id: i64) -> PluginResult<Option<serde_json::Value>> { Ok(None) }
-        async fn update_wp_state(&self, _id: i64, _state: &str) -> PluginResult<()> { Ok(()) }
-        async fn append_audit_entry(&self, _entry: &serde_json::Value) -> PluginResult<i64> { Ok(1) }
-        async fn get_audit_trail(&self, _feature_id: i64) -> PluginResult<Vec<serde_json::Value>> { Ok(vec![]) }
+        async fn create_feature(&self, _feature: &serde_json::Value) -> PluginResult<i64> {
+            Ok(1)
+        }
+        async fn get_feature_by_slug(
+            &self,
+            _slug: &str,
+        ) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn get_feature_by_id(&self, _id: i64) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn update_feature_state(&self, _id: i64, _state: &str) -> PluginResult<()> {
+            Ok(())
+        }
+        async fn list_all_features(&self) -> PluginResult<Vec<serde_json::Value>> {
+            Ok(vec![])
+        }
+        async fn create_work_package(&self, _wp: &serde_json::Value) -> PluginResult<i64> {
+            Ok(1)
+        }
+        async fn get_work_package(&self, _id: i64) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn update_wp_state(&self, _id: i64, _state: &str) -> PluginResult<()> {
+            Ok(())
+        }
+        async fn append_audit_entry(&self, _entry: &serde_json::Value) -> PluginResult<i64> {
+            Ok(1)
+        }
+        async fn get_audit_trail(&self, _feature_id: i64) -> PluginResult<Vec<serde_json::Value>> {
+            Ok(vec![])
+        }
     }
 
     #[test]
@@ -298,7 +339,9 @@ mod tests {
         registry.register_storage(plugin).unwrap();
 
         assert!(registry.storage("mock-storage").is_some());
-        assert!(registry.storage_adapters().contains(&"mock-storage".to_string()));
+        assert!(registry
+            .storage_adapters()
+            .contains(&"mock-storage".to_string()));
         assert_eq!(registry.stats().storage_count, 1);
     }
 

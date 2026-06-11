@@ -55,8 +55,9 @@ impl SqliteStoragePlugin {
     // kept: public constructor used by downstream crates' test suites
     #[allow(dead_code)]
     pub fn in_memory() -> PluginResult<Self> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| PluginError::Initialization(format!("failed to open in-memory db: {}", e)))?;
+        let conn = Connection::open_in_memory().map_err(|e| {
+            PluginError::Initialization(format!("failed to open in-memory db: {}", e))
+        })?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| PluginError::Initialization(format!("pragma failed: {}", e)))?;
@@ -419,11 +420,13 @@ mod tests {
     #[test]
     fn test_new_and_init() {
         let plugin = create_test_plugin();
-        plugin.initialize(pheno_plugin_core::traits::PluginConfig {
-            name: "test".to_string(),
-            version: "0.1.0".to_string(),
-            adapter_config: serde_json::json!({}),
-        }).expect("init failed");
+        plugin
+            .initialize(pheno_plugin_core::traits::PluginConfig {
+                name: "test".to_string(),
+                version: "0.1.0".to_string(),
+                adapter_config: serde_json::json!({}),
+            })
+            .expect("init failed");
     }
 
     #[test]
@@ -659,8 +662,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("pheno-plugin-sqlite-test-{}-{}.db", pid, nanos));
+        let path =
+            std::env::temp_dir().join(format!("pheno-plugin-sqlite-test-{}-{}.db", pid, nanos));
 
         // Construct from a real file path (NOT in_memory).
         let plugin = SqliteStoragePlugin::new(&path)
@@ -704,13 +707,19 @@ mod tests {
             assert_eq!(created.unwrap()["state"], "draft");
 
             // First update: draft -> active (overwrites default).
-            plugin.update_feature_state(feature_id, "active").await.unwrap();
+            plugin
+                .update_feature_state(feature_id, "active")
+                .await
+                .unwrap();
             let after_active = plugin.get_feature_by_id(feature_id).await.unwrap();
             assert!(after_active.is_some());
             assert_eq!(after_active.unwrap()["state"], "active");
 
             // Second update: active -> complete (verifies the prior state is overwritten).
-            plugin.update_feature_state(feature_id, "complete").await.unwrap();
+            plugin
+                .update_feature_state(feature_id, "complete")
+                .await
+                .unwrap();
             let after_complete = plugin.get_feature_by_id(feature_id).await.unwrap();
             assert!(after_complete.is_some());
             assert_eq!(after_complete.unwrap()["state"], "complete");

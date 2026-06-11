@@ -134,8 +134,7 @@ mod tests {
         ];
         for v in variants {
             let serialized = serde_yaml::to_string(&v).expect("serialize");
-            let back: ContainerStatus =
-                serde_yaml::from_str(&serialized).expect("deserialize");
+            let back: ContainerStatus = serde_yaml::from_str(&serialized).expect("deserialize");
             assert_eq!(back, v);
         }
     }
@@ -181,11 +180,7 @@ mod tests {
             image: "nginx:latest".to_string(),
             name: Some("web".to_string()),
             env,
-            cmd: Some(vec![
-                "nginx".to_string(),
-                "-g".to_string(),
-                "daemon off;".to_string(),
-            ]),
+            cmd: Some(vec!["nginx".to_string(), "-g".to_string(), "daemon off;".to_string()]),
             workdir: Some("/app".to_string()),
         };
 

@@ -113,10 +113,7 @@ mod tests {
         let io_err: PluginError =
             std::io::Error::new(std::io::ErrorKind::NotFound, "io_inner_text").into();
         let io_displayed = format!("{}", io_err);
-        assert!(
-            !io_displayed.is_empty(),
-            "Io Display should not be empty"
-        );
+        assert!(!io_displayed.is_empty(), "Io Display should not be empty");
         assert!(
             io_displayed.contains("io_inner_text"),
             "Io Display should contain inner text: `{}`",
@@ -149,8 +146,7 @@ mod tests {
 
     #[test]
     fn test_plugin_error_from_serde() {
-        let bad: serde_json::Error =
-            serde_json::from_str::<i32>("{ not valid json").unwrap_err();
+        let bad: serde_json::Error = serde_json::from_str::<i32>("{ not valid json").unwrap_err();
         let err: PluginError = bad.into();
         assert!(matches!(err, PluginError::Serialization(_)));
         assert!(std::error::Error::source(&err).is_some());

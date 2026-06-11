@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use git2::{Repository, BranchType};
+use git2::{BranchType, Repository};
 
 use pheno_plugin_core::{
     error::{PluginError, PluginResult},
@@ -110,11 +110,7 @@ impl AdapterPlugin for GitAdapter {
 
 #[async_trait]
 impl VcsPlugin for GitAdapter {
-    async fn create_worktree(
-        &self,
-        feature_slug: &str,
-        wp_id: &str,
-    ) -> PluginResult<PathBuf> {
+    async fn create_worktree(&self, feature_slug: &str, wp_id: &str) -> PluginResult<PathBuf> {
         let repo = self.open_repo()?;
         let base_branch = self.main_branch_name()?;
 
@@ -130,30 +126,30 @@ impl VcsPlugin for GitAdapter {
         let worktree_path = self.repo_path.join(".worktrees").join(wp_id);
         std::fs::create_dir_all(&worktree_path)?;
 
-        let base_ref = repo.find_branch(&base_branch, BranchType::Local)
+        let base_ref = repo
+            .find_branch(&base_branch, BranchType::Local)
             .map_err(|e| PluginError::NotFound(format!("Base branch not found: {}", e)))?;
         let base_commit = base_ref.get().peel_to_commit().map_err(git_err)?;
 
-        let wt_repo = Repository::init(&worktree_path).map_err(|e| {
-            PluginError::Operation(format!("Failed to init worktree: {}", e))
-        })?;
+        let wt_repo = Repository::init(&worktree_path)
+            .map_err(|e| PluginError::Operation(format!("Failed to init worktree: {}", e)))?;
 
-        wt_repo.branch(&branch_name, &base_commit, false).map_err(|e| {
-            PluginError::Operation(format!("Failed to create branch: {}", e))
-        })?;
+        wt_repo
+            .branch(&branch_name, &base_commit, false)
+            .map_err(|e| PluginError::Operation(format!("Failed to create branch: {}", e)))?;
 
-        wt_repo.set_head(&format!("refs/heads/{}", branch_name)).map_err(|e| {
-            PluginError::Operation(format!("Failed to checkout branch: {}", e))
-        })?;
+        wt_repo
+            .set_head(&format!("refs/heads/{}", branch_name))
+            .map_err(|e| PluginError::Operation(format!("Failed to checkout branch: {}", e)))?;
 
         Ok(worktree_path)
     }
 
     async fn list_worktrees(&self) -> PluginResult<Vec<WorktreeInfo>> {
         let repo = self.open_repo()?;
-        let names = repo.worktrees().map_err(|e| {
-            PluginError::Operation(format!("Failed to list worktrees: {}", e))
-        })?;
+        let names = repo
+            .worktrees()
+            .map_err(|e| PluginError::Operation(format!("Failed to list worktrees: {}", e)))?;
 
         let mut worktrees = Vec::new();
 
@@ -188,7 +184,11 @@ impl VcsPlugin for GitAdapter {
 
             // Get branch name from worktree HEAD
             let branch = if let Ok(wt_repo) = Repository::open(&path) {
-                wt_repo.head().ok().and_then(|h| h.shorthand().map(String::from)).unwrap_or_else(|| name_str.clone())
+                wt_repo
+                    .head()
+                    .ok()
+                    .and_then(|h| h.shorthand().map(String::from))
+                    .unwrap_or_else(|| name_str.clone())
             } else {
                 name_str.clone()
             };
@@ -208,9 +208,9 @@ impl VcsPlugin for GitAdapter {
         let repo = self.open_repo()?;
 
         // Find the worktree by matching its path
-        let names = repo.worktrees().map_err(|e| {
-            PluginError::Operation(format!("Failed to list worktrees: {}", e))
-        })?;
+        let names = repo
+            .worktrees()
+            .map_err(|e| PluginError::Operation(format!("Failed to list worktrees: {}", e)))?;
 
         let mut found_name: Option<String> = None;
         for name_bytes in names.iter() {
@@ -220,7 +220,8 @@ impl VcsPlugin for GitAdapter {
             };
             if let Ok(wt) = repo.find_worktree(name) {
                 let wt_path = PathBuf::from(wt.path());
-                let canonical_path = std::fs::canonicalize(worktree_path).unwrap_or_else(|_| worktree_path.to_path_buf());
+                let canonical_path = std::fs::canonicalize(worktree_path)
+                    .unwrap_or_else(|_| worktree_path.to_path_buf());
                 let canonical_wt = std::fs::canonicalize(&wt_path).unwrap_or(wt_path);
                 if canonical_path == canonical_wt {
                     found_name = Some(name.to_string());
@@ -247,13 +248,13 @@ impl VcsPlugin for GitAdapter {
     async fn create_branch(&self, branch_name: &str, base: &str) -> PluginResult<()> {
         let repo = self.open_repo()?;
 
-        let base_branch = repo.find_branch(base, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Base branch '{}' not found: {}", base, e)))?;
+        let base_branch = repo.find_branch(base, BranchType::Local).map_err(|e| {
+            PluginError::NotFound(format!("Base branch '{}' not found: {}", base, e))
+        })?;
         let base_commit = base_branch.get().peel_to_commit().map_err(git_err)?;
 
-        repo.branch(branch_name, &base_commit, false).map_err(|e| {
-            PluginError::Operation(format!("Failed to create branch: {}", e))
-        })?;
+        repo.branch(branch_name, &base_commit, false)
+            .map_err(|e| PluginError::Operation(format!("Failed to create branch: {}", e)))?;
 
         Ok(())
     }
@@ -261,34 +262,34 @@ impl VcsPlugin for GitAdapter {
     async fn checkout_branch(&self, branch_name: &str) -> PluginResult<()> {
         let repo = self.open_repo()?;
 
-        let branch = repo.find_branch(branch_name, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Branch '{}' not found: {}", branch_name, e)))?;
+        let branch = repo
+            .find_branch(branch_name, BranchType::Local)
+            .map_err(|e| {
+                PluginError::NotFound(format!("Branch '{}' not found: {}", branch_name, e))
+            })?;
 
         branch.get().peel_to_commit().map_err(git_err)?;
 
         let mut checkout_opts = git2::build::CheckoutBuilder::new();
         checkout_opts.force();
 
-        repo.checkout_head(Some(&mut checkout_opts)).map_err(|e| {
-            PluginError::Operation(format!("Failed to checkout branch: {}", e))
-        })?;
+        repo.checkout_head(Some(&mut checkout_opts))
+            .map_err(|e| PluginError::Operation(format!("Failed to checkout branch: {}", e)))?;
 
         Ok(())
     }
 
-    async fn merge_to_target(
-        &self,
-        source: &str,
-        target: &str,
-    ) -> PluginResult<MergeResult> {
+    async fn merge_to_target(&self, source: &str, target: &str) -> PluginResult<MergeResult> {
         let repo = self.open_repo()?;
 
         self.checkout_branch(target).await?;
 
-        let source_branch = repo.find_branch(source, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Source branch '{}' not found: {}", source, e)))?;
-        let target_branch = repo.find_branch(target, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Target branch '{}' not found: {}", target, e)))?;
+        let source_branch = repo.find_branch(source, BranchType::Local).map_err(|e| {
+            PluginError::NotFound(format!("Source branch '{}' not found: {}", source, e))
+        })?;
+        let target_branch = repo.find_branch(target, BranchType::Local).map_err(|e| {
+            PluginError::NotFound(format!("Target branch '{}' not found: {}", target, e))
+        })?;
 
         let source_commit = source_branch.get().peel_to_commit().map_err(git_err)?;
         let target_commit = target_branch.get().peel_to_commit().map_err(git_err)?;
@@ -299,15 +300,20 @@ impl VcsPlugin for GitAdapter {
 
         // Find annotated commit for merge
         let source_oid = source_commit.id();
-        let annotated = repo.find_annotated_commit(source_oid)
-            .map_err(|e| PluginError::Operation(format!("Failed to find annotated commit: {}", e)))?;
-
-        repo.merge(&[&annotated], Some(&mut merge_opts), Some(&mut checkout_opts))
-            .map_err(|e| PluginError::Operation(format!("Failed to perform merge: {}", e)))?;
-
-        let mut index = repo.index().map_err(|e| {
-            PluginError::Operation(format!("Failed to get index: {}", e))
+        let annotated = repo.find_annotated_commit(source_oid).map_err(|e| {
+            PluginError::Operation(format!("Failed to find annotated commit: {}", e))
         })?;
+
+        repo.merge(
+            &[&annotated],
+            Some(&mut merge_opts),
+            Some(&mut checkout_opts),
+        )
+        .map_err(|e| PluginError::Operation(format!("Failed to perform merge: {}", e)))?;
+
+        let mut index = repo
+            .index()
+            .map_err(|e| PluginError::Operation(format!("Failed to get index: {}", e)))?;
 
         let conflicts: Vec<ConflictInfo> = if index.has_conflicts() {
             vec![ConflictInfo {
@@ -327,26 +333,26 @@ impl VcsPlugin for GitAdapter {
             });
         }
 
-        let signature = repo.signature().map_err(|e| {
-            PluginError::Operation(format!("Failed to get signature: {}", e))
-        })?;
+        let signature = repo
+            .signature()
+            .map_err(|e| PluginError::Operation(format!("Failed to get signature: {}", e)))?;
 
-        let tree = index.write_tree().map_err(|e| {
-            PluginError::Operation(format!("Failed to write tree: {}", e))
-        })?;
+        let tree = index
+            .write_tree()
+            .map_err(|e| PluginError::Operation(format!("Failed to write tree: {}", e)))?;
 
         let tree = repo.find_tree(tree).map_err(git_err)?;
 
-        let commit_id = repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            &format!("Merge branch '{}' into '{}'", source, target),
-            &tree,
-            &[&target_commit, &source_commit],
-        ).map_err(|e| {
-            PluginError::Operation(format!("Failed to create merge commit: {}", e))
-        })?;
+        let commit_id = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                &format!("Merge branch '{}' into '{}'", source, target),
+                &tree,
+                &[&target_commit, &source_commit],
+            )
+            .map_err(|e| PluginError::Operation(format!("Failed to create merge commit: {}", e)))?;
 
         let _ = repo.cleanup_state();
 
@@ -364,27 +370,31 @@ impl VcsPlugin for GitAdapter {
     ) -> PluginResult<Vec<ConflictInfo>> {
         let repo = self.open_repo()?;
 
-        let source_branch = repo.find_branch(source, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Source branch '{}' not found: {}", source, e)))?;
-        let target_branch = repo.find_branch(target, BranchType::Local)
-            .map_err(|e| PluginError::NotFound(format!("Target branch '{}' not found: {}", target, e)))?;
+        let source_branch = repo.find_branch(source, BranchType::Local).map_err(|e| {
+            PluginError::NotFound(format!("Source branch '{}' not found: {}", source, e))
+        })?;
+        let target_branch = repo.find_branch(target, BranchType::Local).map_err(|e| {
+            PluginError::NotFound(format!("Target branch '{}' not found: {}", target, e))
+        })?;
 
         let source_commit = source_branch.get().peel_to_commit().map_err(git_err)?;
         let target_commit = target_branch.get().peel_to_commit().map_err(git_err)?;
 
-        let diff = repo.diff_tree_to_tree(
-            Some(&target_commit.tree().map_err(git_err)?),
-            Some(&source_commit.tree().map_err(git_err)?),
-            None,
-        ).map_err(|e| {
-            PluginError::Operation(format!("Failed to diff trees: {}", e))
-        })?;
+        let diff = repo
+            .diff_tree_to_tree(
+                Some(&target_commit.tree().map_err(git_err)?),
+                Some(&source_commit.tree().map_err(git_err)?),
+                None,
+            )
+            .map_err(|e| PluginError::Operation(format!("Failed to diff trees: {}", e)))?;
 
         let mut conflicts = Vec::new();
 
         diff.foreach(
             &mut |delta, _| {
-                let path = delta.new_file().path()
+                let path = delta
+                    .new_file()
+                    .path()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
                 if !path.is_empty() {
@@ -399,18 +409,13 @@ impl VcsPlugin for GitAdapter {
             None,
             None,
             None,
-        ).map_err(|e| {
-            PluginError::Operation(format!("Failed to iterate diff: {}", e))
-        })?;
+        )
+        .map_err(|e| PluginError::Operation(format!("Failed to iterate diff: {}", e)))?;
 
         Ok(conflicts)
     }
 
-    async fn read_artifact(
-        &self,
-        feature_slug: &str,
-        relative_path: &str,
-    ) -> PluginResult<String> {
+    async fn read_artifact(&self, feature_slug: &str, relative_path: &str) -> PluginResult<String> {
         let artifact_path = self
             .repo_path
             .join("kitty-specs")
@@ -438,16 +443,10 @@ impl VcsPlugin for GitAdapter {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(&artifact_path, content).map_err(|e| {
-            PluginError::Io(e)
-        })
+        std::fs::write(&artifact_path, content).map_err(|e| PluginError::Io(e))
     }
 
-    async fn artifact_exists(
-        &self,
-        feature_slug: &str,
-        relative_path: &str,
-    ) -> PluginResult<bool> {
+    async fn artifact_exists(&self, feature_slug: &str, relative_path: &str) -> PluginResult<bool> {
         let artifact_path = self
             .repo_path
             .join("kitty-specs")
@@ -457,10 +456,7 @@ impl VcsPlugin for GitAdapter {
         Ok(artifact_path.exists())
     }
 
-    async fn scan_feature_artifacts(
-        &self,
-        feature_slug: &str,
-    ) -> PluginResult<FeatureArtifacts> {
+    async fn scan_feature_artifacts(&self, feature_slug: &str) -> PluginResult<FeatureArtifacts> {
         let feature_path = self.repo_path.join("kitty-specs").join(feature_slug);
 
         if !feature_path.exists() {
@@ -487,7 +483,9 @@ impl VcsPlugin for GitAdapter {
             if let Ok(entries) = std::fs::read_dir(audit_path) {
                 for entry in entries.flatten() {
                     if entry.path().is_file() {
-                        artifacts.evidence_paths.push(entry.path().to_string_lossy().to_string());
+                        artifacts
+                            .evidence_paths
+                            .push(entry.path().to_string_lossy().to_string());
                     }
                 }
             }
@@ -505,7 +503,8 @@ mod tests {
     fn create_test_repo() -> PluginResult<(TempDir, GitAdapter)> {
         let temp_dir = TempDir::new().map_err(|e| PluginError::Io(e))?;
         let repo_path = temp_dir.path();
-        Repository::init(repo_path).map_err(|e| PluginError::Initialization(format!("Failed to init repo: {}", e)))?;
+        Repository::init(repo_path)
+            .map_err(|e| PluginError::Initialization(format!("Failed to init repo: {}", e)))?;
         let adapter = GitAdapter::new(repo_path)?;
         Ok((temp_dir, adapter))
     }
@@ -522,7 +521,9 @@ mod tests {
     async fn test_artifact_operations() -> PluginResult<()> {
         let (_dir, adapter) = create_test_repo()?;
 
-        adapter.write_artifact("test-feature", "test.txt", "Hello, World!").await?;
+        adapter
+            .write_artifact("test-feature", "test.txt", "Hello, World!")
+            .await?;
 
         assert!(adapter.artifact_exists("test-feature", "test.txt").await?);
 

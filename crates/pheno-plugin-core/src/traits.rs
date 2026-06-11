@@ -120,11 +120,7 @@ pub trait VcsPlugin: AdapterPlugin {
     // -- Worktree operations --
 
     /// Create a worktree for a feature work package.
-    async fn create_worktree(
-        &self,
-        feature_slug: &str,
-        wp_id: &str,
-    ) -> PluginResult<PathBuf>;
+    async fn create_worktree(&self, feature_slug: &str, wp_id: &str) -> PluginResult<PathBuf>;
 
     /// List all worktrees.
     async fn list_worktrees(&self) -> PluginResult<Vec<WorktreeInfo>>;
@@ -143,27 +139,16 @@ pub trait VcsPlugin: AdapterPlugin {
     // -- Merge operations --
 
     /// Merge source branch into target.
-    async fn merge_to_target(
-        &self,
-        source: &str,
-        target: &str,
-    ) -> PluginResult<MergeResult>;
+    async fn merge_to_target(&self, source: &str, target: &str) -> PluginResult<MergeResult>;
 
     /// Detect conflicts between branches.
-    async fn detect_conflicts(
-        &self,
-        source: &str,
-        target: &str,
-    ) -> PluginResult<Vec<ConflictInfo>>;
+    async fn detect_conflicts(&self, source: &str, target: &str)
+        -> PluginResult<Vec<ConflictInfo>>;
 
     // -- Artifact operations --
 
     /// Read an artifact file.
-    async fn read_artifact(
-        &self,
-        feature_slug: &str,
-        relative_path: &str,
-    ) -> PluginResult<String>;
+    async fn read_artifact(&self, feature_slug: &str, relative_path: &str) -> PluginResult<String>;
 
     /// Write an artifact file.
     async fn write_artifact(
@@ -174,17 +159,10 @@ pub trait VcsPlugin: AdapterPlugin {
     ) -> PluginResult<()>;
 
     /// Check if an artifact exists.
-    async fn artifact_exists(
-        &self,
-        feature_slug: &str,
-        relative_path: &str,
-    ) -> PluginResult<bool>;
+    async fn artifact_exists(&self, feature_slug: &str, relative_path: &str) -> PluginResult<bool>;
 
     /// Scan and collect all artifacts for a feature.
-    async fn scan_feature_artifacts(
-        &self,
-        feature_slug: &str,
-    ) -> PluginResult<FeatureArtifacts>;
+    async fn scan_feature_artifacts(&self, feature_slug: &str) -> PluginResult<FeatureArtifacts>;
 }
 
 // ============================================================================
@@ -208,22 +186,13 @@ pub trait StoragePlugin: AdapterPlugin {
     // -- Feature operations --
 
     /// Create a new feature.
-    async fn create_feature(
-        &self,
-        feature: &serde_json::Value,
-    ) -> PluginResult<i64>;
+    async fn create_feature(&self, feature: &serde_json::Value) -> PluginResult<i64>;
 
     /// Get a feature by slug.
-    async fn get_feature_by_slug(
-        &self,
-        slug: &str,
-    ) -> PluginResult<Option<serde_json::Value>>;
+    async fn get_feature_by_slug(&self, slug: &str) -> PluginResult<Option<serde_json::Value>>;
 
     /// Get a feature by ID.
-    async fn get_feature_by_id(
-        &self,
-        id: i64,
-    ) -> PluginResult<Option<serde_json::Value>>;
+    async fn get_feature_by_id(&self, id: i64) -> PluginResult<Option<serde_json::Value>>;
 
     /// Update feature state.
     async fn update_feature_state(&self, id: i64, state: &str) -> PluginResult<()>;
@@ -234,16 +203,10 @@ pub trait StoragePlugin: AdapterPlugin {
     // -- Work package operations --
 
     /// Create a work package.
-    async fn create_work_package(
-        &self,
-        wp: &serde_json::Value,
-    ) -> PluginResult<i64>;
+    async fn create_work_package(&self, wp: &serde_json::Value) -> PluginResult<i64>;
 
     /// Get a work package by ID.
-    async fn get_work_package(
-        &self,
-        id: i64,
-    ) -> PluginResult<Option<serde_json::Value>>;
+    async fn get_work_package(&self, id: i64) -> PluginResult<Option<serde_json::Value>>;
 
     /// Update work package state.
     async fn update_wp_state(&self, id: i64, state: &str) -> PluginResult<()>;
@@ -251,16 +214,10 @@ pub trait StoragePlugin: AdapterPlugin {
     // -- Audit operations --
 
     /// Append an audit entry.
-    async fn append_audit_entry(
-        &self,
-        entry: &serde_json::Value,
-    ) -> PluginResult<i64>;
+    async fn append_audit_entry(&self, entry: &serde_json::Value) -> PluginResult<i64>;
 
     /// Get audit trail for a feature.
-    async fn get_audit_trail(
-        &self,
-        feature_id: i64,
-    ) -> PluginResult<Vec<serde_json::Value>>;
+    async fn get_audit_trail(&self, feature_id: i64) -> PluginResult<Vec<serde_json::Value>>;
 }
 
 #[cfg(test)]
@@ -285,7 +242,11 @@ mod tests {
         assert_eq!(cloned.adapter_config, cfg.adapter_config);
 
         let dbg = format!("{:?}", cfg);
-        assert!(dbg.contains("x"), "debug output should contain name 'x': {}", dbg);
+        assert!(
+            dbg.contains("x"),
+            "debug output should contain name 'x': {}",
+            dbg
+        );
         assert!(
             dbg.contains("1.0"),
             "debug output should contain version '1.0': {}",
@@ -322,8 +283,7 @@ mod tests {
     fn test_plugin_config_default_adapter_config() {
         // JSON payload intentionally omits `adapter_config` to exercise `#[serde(default)]`.
         let json_str = r#"{"name":"x","version":"1.0"}"#;
-        let cfg: PluginConfig =
-            serde_json::from_str(json_str).expect("deserialize should succeed");
+        let cfg: PluginConfig = serde_json::from_str(json_str).expect("deserialize should succeed");
 
         assert_eq!(cfg.name, "x");
         assert_eq!(cfg.version, "1.0");

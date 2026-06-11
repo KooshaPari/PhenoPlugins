@@ -474,11 +474,7 @@ mod tests {
 
     #[test]
     fn test_port_mapping_creation() {
-        let mapping = PortMapping {
-            host_port: 8080,
-            container_port: 80,
-            protocol: Protocol::Tcp,
-        };
+        let mapping = PortMapping { host_port: 8080, container_port: 80, protocol: Protocol::Tcp };
 
         assert_eq!(mapping.host_port, 8080);
         assert_eq!(mapping.container_port, 80);
@@ -487,11 +483,7 @@ mod tests {
 
     #[test]
     fn test_port_mapping_udp_protocol() {
-        let mapping = PortMapping {
-            host_port: 53,
-            container_port: 53,
-            protocol: Protocol::Udp,
-        };
+        let mapping = PortMapping { host_port: 53, container_port: 53, protocol: Protocol::Udp };
 
         assert_eq!(mapping.host_port, 53);
         assert_eq!(mapping.container_port, 53);

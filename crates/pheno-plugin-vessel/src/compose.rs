@@ -203,14 +203,8 @@ services:
 
         assert_eq!(parsed.services.len(), compose.services.len());
         assert_eq!(parsed.version, compose.version);
-        assert_eq!(
-            parsed.services["web"].image,
-            compose.services["web"].image
-        );
-        assert_eq!(
-            parsed.services["db"].image,
-            compose.services["db"].image
-        );
+        assert_eq!(parsed.services["web"].image, compose.services["web"].image);
+        assert_eq!(parsed.services["db"].image, compose.services["db"].image);
     }
 
     #[test]
@@ -222,18 +216,9 @@ services:
         services.insert("api".to_string(), ComposeService::default());
         services.insert("web".to_string(), ComposeService::default());
 
-        let compose = ComposeFile {
-            version: None,
-            services,
-            networks: None,
-            volumes: None,
-        };
+        let compose = ComposeFile { version: None, services, networks: None, volumes: None };
 
-        let names: HashSet<&str> = compose
-            .service_names()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
+        let names: HashSet<&str> = compose.service_names().iter().map(|s| s.as_str()).collect();
         assert_eq!(names.len(), 3);
         assert!(names.contains("db"));
         assert!(names.contains("api"));
@@ -253,12 +238,8 @@ services:
 
     #[test]
     fn test_ordered_services_empty() {
-        let compose = ComposeFile {
-            version: None,
-            services: HashMap::new(),
-            networks: None,
-            volumes: None,
-        };
+        let compose =
+            ComposeFile { version: None, services: HashMap::new(), networks: None, volumes: None };
 
         let ordered = compose.ordered_services();
         assert!(ordered.is_empty());
@@ -283,19 +264,8 @@ services:
         };
 
         assert_eq!(service.image.as_ref().unwrap(), "postgres:15");
-        assert_eq!(
-            service
-                .environment
-                .as_ref()
-                .unwrap()
-                .get("POSTGRES_DB")
-                .unwrap(),
-            "test"
-        );
-        assert_eq!(
-            service.ports.as_ref().unwrap(),
-            &vec!["5432:5432".to_string()]
-        );
+        assert_eq!(service.environment.as_ref().unwrap().get("POSTGRES_DB").unwrap(), "test");
+        assert_eq!(service.ports.as_ref().unwrap(), &vec!["5432:5432".to_string()]);
     }
 
     #[test]
@@ -309,22 +279,10 @@ services:
         services.insert("db".to_string(), ComposeService::default());
         services.insert("api".to_string(), ComposeService::default());
 
-        let compose = ComposeFile {
-            version: None,
-            services,
-            networks: None,
-            volumes: None,
-        };
+        let compose = ComposeFile { version: None, services, networks: None, volumes: None };
 
         let ordered = compose.ordered_services();
         assert_eq!(ordered.len(), 3);
-        assert_eq!(
-            compose.services["web"]
-                .depends_on
-                .as_ref()
-                .unwrap()
-                .len(),
-            2
-        );
+        assert_eq!(compose.services["web"].depends_on.as_ref().unwrap().len(), 2);
     }
 }

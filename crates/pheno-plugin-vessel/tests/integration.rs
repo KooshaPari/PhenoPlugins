@@ -474,3 +474,182 @@ fn test_container_create_config_with_env() {
     assert_eq!(config.ports.len(), 1);
     assert_eq!(config.volumes.len(), 1);
 }
+
+// ============================================================================
+// Integration Tests - Data Type Coverage
+// ============================================================================
+
+// Traces to: FR-VESSEL-INTEGRATION-031
+//
+// Note: phenotype-vessel depends on `serde_yaml` (not `serde_json`) for serde
+// format round-trips (see crates/pheno-plugin-vessel/Cargo.toml). The in-crate
+// unit test at src/container.rs::test_container_status_serde_roundtrip uses
+// serde_yaml for the same purpose. We mirror that here so the integration test
+// compiles against the crate's actual dependency graph.
+#[test]
+fn test_container_status_all_variants_serde() {
+    // ContainerStatus derives Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize
+    // (with #[serde(rename_all = "lowercase")]) per src/container.rs.
+    // Verify every variant round-trips through a real Serialize/Deserialize call.
+    let variants = [
+        ContainerStatus::Created,
+        ContainerStatus::Running,
+        ContainerStatus::Paused,
+        ContainerStatus::Restarting,
+        ContainerStatus::Removing,
+        ContainerStatus::Exited,
+        ContainerStatus::Dead,
+    ];
+    for v in variants {
+        let serialized = serde_yaml::to_string(&v).expect("serialize ContainerStatus");
+        let back: ContainerStatus =
+            serde_yaml::from_str(&serialized).expect("deserialize ContainerStatus");
+        assert_eq!(back, v, "serde roundtrip failed for variant");
+    }
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-032
+#[test]
+fn test_container_info_fields() {
+    let info = ContainerInfo {
+        id: "abc".to_string(),
+        name: "x".to_string(),
+        image: "nginx".to_string(),
+        status: "running".to_string(),
+        created: "2024-01-01".to_string(),
+    };
+
+    assert_eq!(info.id, "abc");
+    assert_eq!(info.name, "x");
+    assert_eq!(info.image, "nginx");
+    assert_eq!(info.status, "running");
+    assert_eq!(info.created, "2024-01-01");
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-033
+//
+// Renamed from `test_container_info_clone` to `test_container_info_clone_all_fields`
+// to avoid colliding with the existing test at line 439 (which only verifies
+// 2 of 5 fields). This new test exercises a full field-by-field comparison so
+// the Clone impl's coverage of every field is checked at the integration level.
+#[test]
+fn test_container_info_clone_all_fields() {
+    let info = ContainerInfo {
+        id: "id-123".to_string(),
+        name: "test".to_string(),
+        image: "nginx".to_string(),
+        status: "running".to_string(),
+        created: "2024-01-01".to_string(),
+    };
+
+    let cloned = info.clone();
+    assert_eq!(cloned.id, info.id);
+    assert_eq!(cloned.name, info.name);
+    assert_eq!(cloned.image, info.image);
+    assert_eq!(cloned.status, info.status);
+    assert_eq!(cloned.created, info.created);
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-034
+#[test]
+fn test_volume_mapping_creation_full() {
+    let ro = VolumeMapping {
+        host_path: "/srv".to_string(),
+        container_path: "/data".to_string(),
+        read_only: true,
+    };
+
+    assert_eq!(ro.host_path, "/srv");
+    assert_eq!(ro.container_path, "/data");
+    assert!(ro.read_only);
+
+    let rw = VolumeMapping {
+        host_path: "/srv".to_string(),
+        container_path: "/data".to_string(),
+        read_only: false,
+    };
+
+    assert_eq!(rw.host_path, "/srv");
+    assert_eq!(rw.container_path, "/data");
+    assert!(!rw.read_only);
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-035
+#[test]
+fn test_image_struct_full() {
+    let image = Image {
+        id: "nginx:1.25".to_string(),
+        name: "nginx".to_string(),
+        tag: "1.25".to_string(),
+        size: 100,
+    };
+
+    assert_eq!(image.id, "nginx:1.25");
+    assert_eq!(image.name, "nginx");
+    assert_eq!(image.tag, "1.25");
+    assert_eq!(image.size, 100);
+
+    // Display impl returns "name:tag" (see src/image.rs::impl Display for Image).
+    assert_eq!(format!("{}", image), "nginx:1.25");
+
+    // reference() method returns "name:tag" (see src/image.rs::Image::reference).
+    assert_eq!(image.reference(), "nginx:1.25");
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-026
+#[tokio::test]
+async fn test_client_start() {
+    let runtime = MockRuntime::new();
+    let client = ContainerClient::new(runtime);
+
+    let container = client.create("nginx:latest", "test-start").await.unwrap();
+    let result = client.start(&container.id).await;
+    assert!(result.is_ok());
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-027
+#[tokio::test]
+async fn test_client_stop() {
+    let runtime = MockRuntime::new();
+    let client = ContainerClient::new(runtime);
+
+    let container = client.create("nginx:latest", "test-stop").await.unwrap();
+    client.start(&container.id).await.unwrap();
+    let result = client.stop(&container.id).await;
+    assert!(result.is_ok());
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-028
+#[tokio::test]
+async fn test_client_rm() {
+    let runtime = MockRuntime::new();
+    let client = ContainerClient::new(runtime);
+
+    let container = client.create("nginx:latest", "test-rm").await.unwrap();
+    let result = client.rm(&container.id).await;
+    assert!(result.is_ok());
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-029
+#[tokio::test]
+async fn test_client_logs() {
+    let runtime = MockRuntime::new();
+    let client = ContainerClient::new(runtime);
+
+    let container = client.create("nginx:latest", "test-logs").await.unwrap();
+    let logs: String = client.logs(&container.id).await.unwrap();
+    assert!(!logs.is_empty());
+}
+
+// Traces to: FR-VESSEL-INTEGRATION-030
+#[tokio::test]
+async fn test_client_full_lifecycle() {
+    let runtime = MockRuntime::new();
+    let client = ContainerClient::new(runtime);
+
+    let container = client.create("nginx:latest", "test-lifecycle").await.unwrap();
+    assert!(client.start(&container.id).await.is_ok());
+    assert!(client.stop(&container.id).await.is_ok());
+    assert!(client.logs(&container.id).await.is_ok());
+    assert!(client.rm(&container.id).await.is_ok());
+}
