@@ -226,6 +226,71 @@ mod tests {
         }
     }
 
+    struct MockStoragePlugin;
+
+    impl AdapterPlugin for MockStoragePlugin {
+        fn name(&self) -> &str { "mock-storage" }
+        fn version(&self) -> &str { "0.1.0" }
+        fn initialize(&self, _config: crate::traits::PluginConfig) -> PluginResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StoragePlugin for MockStoragePlugin {
+        async fn create_feature(
+            &self,
+            _feature: &serde_json::Value,
+        ) -> PluginResult<i64> {
+            Ok(0)
+        }
+        async fn get_feature_by_slug(
+            &self,
+            _slug: &str,
+        ) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn get_feature_by_id(
+            &self,
+            _id: i64,
+        ) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn update_feature_state(&self, _id: i64, _state: &str) -> PluginResult<()> {
+            Ok(())
+        }
+        async fn list_all_features(&self) -> PluginResult<Vec<serde_json::Value>> {
+            Ok(vec![])
+        }
+        async fn create_work_package(
+            &self,
+            _wp: &serde_json::Value,
+        ) -> PluginResult<i64> {
+            Ok(0)
+        }
+        async fn get_work_package(
+            &self,
+            _id: i64,
+        ) -> PluginResult<Option<serde_json::Value>> {
+            Ok(None)
+        }
+        async fn update_wp_state(&self, _id: i64, _state: &str) -> PluginResult<()> {
+            Ok(())
+        }
+        async fn append_audit_entry(
+            &self,
+            _entry: &serde_json::Value,
+        ) -> PluginResult<i64> {
+            Ok(0)
+        }
+        async fn get_audit_trail(
+            &self,
+            _feature_id: i64,
+        ) -> PluginResult<Vec<serde_json::Value>> {
+            Ok(vec![])
+        }
+    }
+
     #[test]
     fn test_registry_creation() {
         let registry = PluginRegistry::new();
@@ -266,5 +331,44 @@ mod tests {
         // Cannot register after finalization
         let result = registry.register_vcs(Box::new(MockVcsPlugin));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_storage_registration_and_lookup() {
+        let registry = PluginRegistry::new();
+        registry.register_storage(Box::new(MockStoragePlugin)).unwrap();
+
+        assert!(registry.storage("mock-storage").is_some());
+        assert!(registry.storage("nope").is_none());
+        assert!(registry.storage_adapters().contains(&"mock-storage".to_string()));
+        assert_eq!(registry.stats().storage_count, 1);
+
+        let result = registry.register_storage(Box::new(MockStoragePlugin));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vcs_adapters_and_default() {
+        let registry = PluginRegistry::default();
+        assert!(registry.vcs_adapters().is_empty());
+        assert!(registry.storage_adapters().is_empty());
+        assert!(!registry.is_finalized());
+    }
+
+    #[tokio::test]
+    async fn test_health_check() {
+        let registry = PluginRegistry::new();
+        registry.register_vcs(Box::new(MockVcsPlugin)).unwrap();
+        registry.register_storage(Box::new(MockStoragePlugin)).unwrap();
+
+        let result = registry.health_check().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_health_check_with_empty_registry() {
+        let registry = PluginRegistry::new();
+        let result = registry.health_check().await;
+        assert!(result.is_ok());
     }
 }

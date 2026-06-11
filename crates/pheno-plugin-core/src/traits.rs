@@ -262,3 +262,44 @@ pub trait StoragePlugin: AdapterPlugin {
         feature_id: i64,
     ) -> PluginResult<Vec<serde_json::Value>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_plugin_config_construction_and_clone() {
+        let cfg = PluginConfig {
+            name: "git".to_string(),
+            version: "0.1.0".to_string(),
+            adapter_config: serde_json::json!({"key": "value"}),
+        };
+        assert_eq!(cfg.name, "git");
+        assert_eq!(cfg.version, "0.1.0");
+        let cloned = cfg.clone();
+        assert_eq!(cloned.name, cfg.name);
+        assert_eq!(cloned.version, cfg.version);
+        let debug = format!("{:?}", cfg);
+        assert!(debug.contains("git"));
+        assert!(debug.contains("0.1.0"));
+    }
+
+    #[test]
+    fn test_plugin_config_serde_roundtrip() {
+        let cfg = PluginConfig {
+            name: "x".to_string(),
+            version: "0.1.0".to_string(),
+            adapter_config: serde_json::json!({}),
+        };
+        let serialized = serde_json::to_string(&cfg).expect("serialize");
+        assert!(serialized.contains("\"name\":\"x\""));
+        assert!(serialized.contains("\"version\":\"0.1.0\""));
+        let deserialized: PluginConfig =
+            serde_json::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized.name, cfg.name);
+        assert_eq!(deserialized.version, cfg.version);
+        let s = "{\"name\":\"a\",\"version\":\"b\"}";
+        assert!(serde_json::from_str::<PluginConfig>(s).is_ok());
+    }
+}
