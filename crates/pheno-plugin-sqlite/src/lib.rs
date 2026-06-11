@@ -524,4 +524,259 @@ mod tests {
             assert_eq!(trail[0]["entry_type"], "created");
         });
     }
+
+    #[test]
+    fn test_db_path_accessor() {
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.db_path(), Path::new(":memory:"));
+    }
+
+    #[test]
+    fn test_connection_accessor() {
+        let plugin = create_test_plugin();
+        let conn = plugin.connection();
+        let conn_guard = conn.lock().expect("lock poisoned");
+        let result: i64 = conn_guard
+            .query_row("SELECT 1", [], |r| r.get(0))
+            .expect("query");
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_adapter_identity() {
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.name(), "sqlite-storage");
+        assert!(!plugin.version().is_empty());
+        assert_eq!(plugin.version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let plugin = create_test_plugin();
+        let debug_str = format!("{:?}", plugin);
+        assert!(debug_str.contains("SqliteStoragePlugin"));
+        assert!(debug_str.contains(":memory:"));
+    }
+
+    #[test]
+    fn test_validation_missing_slug() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Missing "slug" field should yield a Validation error.
+            let feature = serde_json::json!({
+                "name": "Test Feature Without Slug"
+            });
+
+            let err = plugin
+                .create_feature(&feature)
+                .await
+                .expect_err("expected Validation error for missing slug");
+            assert!(
+                matches!(err, PluginError::Validation(ref msg) if msg == "missing slug"),
+                "unexpected error: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_validation_missing_feature_id() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Missing "feature_id" field should yield a Validation error.
+            let wp = serde_json::json!({
+                "title": "Work Package Without Feature"
+            });
+
+            let err = plugin
+                .create_work_package(&wp)
+                .await
+                .expect_err("expected Validation error for missing feature_id");
+            assert!(
+                matches!(err, PluginError::Validation(ref msg) if msg == "missing feature_id"),
+                "unexpected error: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_missing_feature_returns_none() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // No features have been created; both lookups should return Ok(None).
+            let by_slug = plugin
+                .get_feature_by_slug("nonexistent")
+                .await
+                .expect("get_feature_by_slug should not error on missing row");
+            assert!(by_slug.is_none(), "expected None for unknown slug");
+
+            let by_id = plugin
+                .get_feature_by_id(9999)
+                .await
+                .expect("get_feature_by_id should not error on missing row");
+            assert!(by_id.is_none(), "expected None for unknown id");
+        });
+    }
+
+    #[test]
+    fn test_get_audit_trail_empty() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Create a feature but no audit entries.
+            let feature = serde_json::json!({
+                "slug": "no-audit",
+                "name": "No Audit Feature"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            // Audit trail for a feature with no entries should be an empty vec.
+            let trail = plugin
+                .get_audit_trail(feature_id)
+                .await
+                .expect("get_audit_trail should not error on empty result");
+            assert!(
+                trail.is_empty(),
+                "expected empty audit trail, got {} entries",
+                trail.len()
+            );
+        });
+    }
+
+    #[test]
+    fn test_new_with_file() {
+        // Build a unique path under the system temp dir.
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("pheno-plugin-sqlite-test-{}-{}.db", pid, nanos));
+
+        // Construct from a real file path (NOT in_memory).
+        let plugin = SqliteStoragePlugin::new(&path)
+            .expect("SqliteStoragePlugin::new(file path) should succeed");
+
+        // The plugin owns and preserves the requested path.
+        assert_eq!(plugin.db_path(), path.as_path());
+
+        // initialize() must succeed against the freshly migrated file-backed DB.
+        plugin
+            .initialize(pheno_plugin_core::traits::PluginConfig {
+                name: "test".to_string(),
+                version: "0.1.0".to_string(),
+                adapter_config: serde_json::json!({}),
+            })
+            .expect("initialize should succeed against file-backed plugin");
+
+        // Drop the plugin (closes the underlying Connection) before removing
+        // the file, then clean up the temp db on disk.
+        drop(plugin);
+        std::fs::remove_file(&path).expect("failed to remove temp sqlite file");
+    }
+
+    #[test]
+    fn test_state_update_transitions() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // -- Feature state transitions: draft -> active -> complete --
+            let feature = serde_json::json!({
+                "slug": "transition-feature",
+                "name": "Transition Feature"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+            assert!(feature_id > 0);
+
+            // No `state` provided on create -> defaults to "draft".
+            let created = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(created.is_some());
+            assert_eq!(created.unwrap()["state"], "draft");
+
+            // First update: draft -> active (overwrites default).
+            plugin.update_feature_state(feature_id, "active").await.unwrap();
+            let after_active = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(after_active.is_some());
+            assert_eq!(after_active.unwrap()["state"], "active");
+
+            // Second update: active -> complete (verifies the prior state is overwritten).
+            plugin.update_feature_state(feature_id, "complete").await.unwrap();
+            let after_complete = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(after_complete.is_some());
+            assert_eq!(after_complete.unwrap()["state"], "complete");
+
+            // -- Work package state transitions: backlog -> in_progress -> done --
+            let wp = serde_json::json!({
+                "feature_id": feature_id,
+                "title": "Transition Work Package"
+            });
+            let wp_id = plugin.create_work_package(&wp).await.unwrap();
+            assert!(wp_id > 0);
+
+            // No `state` provided on create -> defaults to "backlog".
+            let wp_created = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(wp_created.is_some());
+            assert_eq!(wp_created.unwrap()["state"], "backlog");
+
+            // First update: backlog -> in_progress (overwrites default).
+            plugin.update_wp_state(wp_id, "in_progress").await.unwrap();
+            let after_in_progress = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(after_in_progress.is_some());
+            assert_eq!(after_in_progress.unwrap()["state"], "in_progress");
+
+            // Second update: in_progress -> done (verifies the prior state is overwritten).
+            plugin.update_wp_state(wp_id, "done").await.unwrap();
+            let after_done = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(after_done.is_some());
+            assert_eq!(after_done.unwrap()["state"], "done");
+        });
+    }
+
+    #[test]
+    fn test_list_all_features_multiple() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Create three features with distinct, sortable slugs.
+            let slugs = ["alpha-feature", "beta-feature", "gamma-feature"];
+            for slug in slugs.iter() {
+                let feature = serde_json::json!({
+                    "slug": slug,
+                    "name": format!("Feature {}", slug)
+                });
+                let id = plugin.create_feature(&feature).await.unwrap();
+                assert!(id > 0);
+            }
+
+            // list_all_features() should return all three.
+            let mut all = plugin.list_all_features().await.unwrap();
+            assert_eq!(all.len(), 3);
+
+            // list_all_features() orders by created_at DESC, so sort by slug
+            // for a stable, order-independent comparison.
+            all.sort_by(|a, b| a["slug"].as_str().cmp(&b["slug"].as_str()));
+
+            let returned: Vec<&str> = all
+                .iter()
+                .map(|f| f["slug"].as_str().expect("slug should be a string"))
+                .collect();
+            assert_eq!(returned, slugs.to_vec());
+
+            // Spot-check that other fields round-tripped through list_all_features.
+            assert_eq!(all[0]["name"], "Feature alpha-feature");
+            assert_eq!(all[1]["name"], "Feature beta-feature");
+            assert_eq!(all[2]["name"], "Feature gamma-feature");
+        });
+    }
 }
