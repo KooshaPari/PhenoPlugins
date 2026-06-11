@@ -1,34 +1,12 @@
 name: Scorecard
-
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   schedule:
-    - cron: "0 0 * * 0"
-
+    - cron: '17 3 * * 6'
 permissions: read-all
-
 jobs:
-  scorecard:
-    name: Scorecard analysis
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      id-token: write
-      contents: read
-      actions: read
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - name: Run Scorecard
-        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
-        with:
-          results_file: results.sarif
-          results_format: sarif
-          publish_results: true
-      - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3
-        with:
-          sarif_file: results.sarif
+  analysis:
+    uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@72b9c6cbdb24c49189b0e7c7395d874830d1ed87
+    with:
+      publish_results: true
