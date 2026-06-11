@@ -128,3 +128,103 @@ pub enum ContainerError {
     #[error("Operation failed: {0}")]
     OperationFailed(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::DockerRuntime;
+
+    #[test]
+    fn test_container_client_new() {
+        // Construct a ContainerClient backed by a concrete DockerRuntime.
+        // Verifies that ContainerClient::new accepts a runtime that implements
+        // the ContainerRuntime trait and that the resulting client is usable
+        // (no panic during construction, runtime_name() is reachable).
+        let client = ContainerClient::new(DockerRuntime::new());
+        assert_eq!(client.runtime_name(), "docker");
+    }
+
+    #[test]
+    fn test_container_client_runtime_name() {
+        // Verify that runtime_name() correctly delegates to the underlying
+        // runtime and returns "docker" for a DockerRuntime-backed client.
+        let client = ContainerClient::new(DockerRuntime::new());
+        assert_eq!(client.runtime_name(), "docker");
+    }
+
+    #[test]
+    fn test_container_error_display() {
+        // Verify Display formatting for every ContainerError variant. The
+        // generated messages must contain a recognizable keyword plus the
+        // stringified inner value.
+        let not_found = ContainerError::NotFound("my-container".to_string());
+        let rendered = format!("{}", not_found);
+        assert!(rendered.contains("not found"), "expected 'not found' substring in: {}", rendered);
+        assert!(
+            rendered.contains("my-container"),
+            "expected 'my-container' substring in: {}",
+            rendered
+        );
+
+        let already_exists = ContainerError::AlreadyExists("dup-name".to_string());
+        let rendered = format!("{}", already_exists);
+        assert!(
+            rendered.contains("already exists"),
+            "expected 'already exists' substring in: {}",
+            rendered
+        );
+        assert!(rendered.contains("dup-name"), "expected 'dup-name' substring in: {}", rendered);
+
+        let op_failed = ContainerError::OperationFailed("boom".to_string());
+        let rendered = format!("{}", op_failed);
+        assert!(rendered.contains("failed"), "expected 'failed' substring in: {}", rendered);
+        assert!(rendered.contains("boom"), "expected 'boom' substring in: {}", rendered);
+    }
+
+    #[test]
+    fn test_container_error_from() {
+        // ContainerError itself has no `#[from]` impls, but VesselError does:
+        //   #[from] ContainerError
+        // Verify the conversion is wired up and the inner payload is preserved.
+        let inner = ContainerError::NotFound("abc".to_string());
+        let outer: VesselError = inner.into();
+        match outer {
+            VesselError::Container(ContainerError::NotFound(s)) => {
+                assert_eq!(s, "abc");
+            }
+            other => panic!("expected VesselError::Container(NotFound), got {:?}", other),
+        }
+
+        // Also verify the std::io::Error -> VesselError #[from] path that is
+        // declared on VesselError, since it is the only other #[from] impl
+        // exposed by this crate's error module.
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let vessel: VesselError = io_err.into();
+        match vessel {
+            VesselError::Io(_) => {}
+            other => panic!("expected VesselError::Io, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_container_client_default_runtime() {
+        // ContainerClient does not expose a with_default_runtime() constructor,
+        // but DockerRuntime is a unit struct that can be constructed with
+        // no arguments. Verify a client can be built from such a default
+        // runtime and still reports the correct name.
+        let client = ContainerClient::new(DockerRuntime);
+        assert_eq!(client.runtime_name(), "docker");
+    }
+
+    #[tokio::test]
+    async fn test_container_client_is_available_returns_bool() {
+        // is_available() does not require docker to be installed; it returns
+        // false in that case rather than erroring. We only assert that the
+        // call resolves to a bool value without panicking.
+        let client = ContainerClient::new(DockerRuntime::new());
+        let available: bool = client.is_available().await;
+        // The result is environment-dependent (true if docker is on PATH,
+        // false otherwise); we just want to ensure the future completed.
+        let _ = available;
+    }
+}

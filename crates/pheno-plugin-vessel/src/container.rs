@@ -46,7 +46,7 @@ pub struct Container {
 }
 
 /// Configuration for creating a container
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContainerConfig {
     /// Image to use
     pub image: String,
@@ -108,5 +108,92 @@ mod tests {
         };
         assert!(container.is_running());
         assert!(!container.is_stopped());
+    }
+
+    #[test]
+    fn test_container_status_all_displays() {
+        assert!(ContainerStatus::Created.to_string().contains("created"));
+        assert!(ContainerStatus::Running.to_string().contains("running"));
+        assert!(ContainerStatus::Paused.to_string().contains("paused"));
+        assert!(ContainerStatus::Restarting.to_string().contains("restarting"));
+        assert!(ContainerStatus::Removing.to_string().contains("removing"));
+        assert!(ContainerStatus::Exited.to_string().contains("exited"));
+        assert!(ContainerStatus::Dead.to_string().contains("dead"));
+    }
+
+    #[test]
+    fn test_container_status_serde_roundtrip() {
+        let variants = [
+            ContainerStatus::Created,
+            ContainerStatus::Running,
+            ContainerStatus::Paused,
+            ContainerStatus::Restarting,
+            ContainerStatus::Removing,
+            ContainerStatus::Exited,
+            ContainerStatus::Dead,
+        ];
+        for v in variants {
+            let serialized = serde_yaml::to_string(&v).expect("serialize").trim().to_string();
+            assert_eq!(serialized, v.to_string());
+            let deserialized: ContainerStatus =
+                serde_yaml::from_str(&serialized).expect("deserialize");
+            assert_eq!(deserialized, v);
+        }
+    }
+
+    #[test]
+    fn test_container_is_stopped() {
+        let mk = |s| Container {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            image: "nginx".to_string(),
+            status: s,
+        };
+        assert!(mk(ContainerStatus::Exited).is_stopped());
+        assert!(mk(ContainerStatus::Dead).is_stopped());
+        assert!(!mk(ContainerStatus::Running).is_stopped());
+        assert!(!mk(ContainerStatus::Created).is_stopped());
+        assert!(!mk(ContainerStatus::Paused).is_stopped());
+    }
+
+    #[test]
+    fn test_container_config_defaults() {
+        let cfg = ContainerConfig::default();
+        assert_eq!(cfg.image, "");
+        assert!(cfg.name.is_none());
+        assert!(cfg.env.is_empty());
+        assert!(cfg.cmd.is_none());
+        assert!(cfg.workdir.is_none());
+    }
+
+    #[test]
+    fn test_container_config_serde() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("BAZ".to_string(), "qux".to_string());
+        let cfg = ContainerConfig {
+            image: "nginx:latest".to_string(),
+            name: Some("web".to_string()),
+            env,
+            cmd: Some(vec!["nginx".to_string(), "-g".to_string(), "daemon off;".to_string()]),
+            workdir: Some("/app".to_string()),
+        };
+        let serialized = serde_yaml::to_string(&cfg).expect("serialize");
+        let deserialized: ContainerConfig = serde_yaml::from_str(&serialized).expect("deserialize");
+        assert_eq!(deserialized.image, cfg.image);
+        assert_eq!(deserialized.name, cfg.name);
+        assert_eq!(deserialized.env, cfg.env);
+        assert_eq!(deserialized.cmd, cfg.cmd);
+        assert_eq!(deserialized.workdir, cfg.workdir);
+    }
+
+    #[test]
+    fn test_container_status_equality() {
+        assert_eq!(ContainerStatus::Running, ContainerStatus::Running);
+        assert_eq!(ContainerStatus::Exited, ContainerStatus::Exited);
+        assert_ne!(ContainerStatus::Running, ContainerStatus::Exited);
+        assert_ne!(ContainerStatus::Created, ContainerStatus::Dead);
+        assert_ne!(ContainerStatus::Paused, ContainerStatus::Restarting);
+        assert_ne!(ContainerStatus::Removing, ContainerStatus::Running);
     }
 }

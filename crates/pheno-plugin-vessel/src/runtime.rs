@@ -471,4 +471,77 @@ mod tests {
         assert_eq!(config.image, "nginx:latest");
         assert_eq!(config.name, Some("test".to_string()));
     }
+
+    #[test]
+    fn test_port_mapping_creation() {
+        // PortMapping has three required fields: host_port, container_port,
+        // and protocol. Verify that construction preserves all three.
+        let pm = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        assert_eq!(pm.host_port, 8080);
+        assert_eq!(pm.container_port, 80);
+        assert!(matches!(pm.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_port_mapping_udp_protocol() {
+        // Verify the UDP variant is also accepted and preserved.
+        let pm = PortMapping {
+            host_port: 53,
+            container_port: 53,
+            protocol: Protocol::Udp,
+        };
+        assert_eq!(pm.host_port, 53);
+        assert!(matches!(pm.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_creation() {
+        // VolumeMapping has three required fields: host_path, container_path,
+        // and read_only. Verify that construction preserves all three and that
+        // both writable and read-only volumes are constructible.
+        let ro = VolumeMapping {
+            host_path: "/host".to_string(),
+            container_path: "/container".to_string(),
+            read_only: true,
+        };
+        assert_eq!(ro.host_path, "/host");
+        assert_eq!(ro.container_path, "/container");
+        assert!(ro.read_only);
+
+        let rw = VolumeMapping {
+            host_path: "/srv".to_string(),
+            container_path: "/data".to_string(),
+            read_only: false,
+        };
+        assert_eq!(rw.host_path, "/srv");
+        assert_eq!(rw.container_path, "/data");
+        assert!(!rw.read_only);
+    }
+
+    #[test]
+    fn test_protocol_debug_and_copy() {
+        // Protocol derives Debug + Clone + Copy. Verify both Debug formatting
+        // and the Copy semantics (using the value after move is fine).
+        let tcp = Protocol::Tcp;
+        let tcp_copy = tcp;
+        assert_eq!(format!("{:?}", tcp), "Tcp");
+        assert_eq!(format!("{:?}", tcp_copy), "Tcp");
+
+        let udp = Protocol::Udp;
+        let udp_copy = udp;
+        assert_eq!(format!("{:?}", udp), "Udp");
+        assert_eq!(format!("{:?}", udp_copy), "Udp");
+    }
+
+    #[test]
+    fn test_docker_runtime_default_trait() {
+        // DockerRuntime derives Default. Verify Default::default() produces a
+        // usable runtime that reports the correct name.
+        let runtime: DockerRuntime = Default::default();
+        assert_eq!(runtime.name(), "docker");
+    }
 }

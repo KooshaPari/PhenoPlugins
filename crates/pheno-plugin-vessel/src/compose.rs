@@ -172,4 +172,157 @@ services:
 
         assert!(db_idx.is_some() && web_idx.is_some());
     }
+
+    #[test]
+    fn test_compose_from_yaml_invalid() {
+        let invalid_yaml = ":invalid: yaml: :::";
+        let result = ComposeFile::from_yaml(invalid_yaml);
+        assert!(result.is_err(), "expected invalid YAML to return an Err");
+    }
+
+    #[test]
+    fn test_compose_to_yaml_roundtrip() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        web.ports = Some(vec!["80:80".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let mut db = ComposeService::default();
+        db.image = Some("postgres:15".to_string());
+        services.insert("db".to_string(), db);
+
+        let compose = ComposeFile {
+            version: Some("3.8".to_string()),
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let yaml = compose.to_yaml().expect("to_yaml should succeed");
+        let parsed = ComposeFile::from_yaml(&yaml).expect("from_yaml should succeed");
+
+        assert_eq!(compose.services.len(), parsed.services.len());
+        assert_eq!(compose.version, parsed.version);
+        assert_eq!(
+            compose.services.get("web").unwrap().image,
+            parsed.services.get("web").unwrap().image
+        );
+        assert_eq!(
+            compose.services.get("web").unwrap().ports,
+            parsed.services.get("web").unwrap().ports
+        );
+        assert_eq!(
+            compose.services.get("db").unwrap().image,
+            parsed.services.get("db").unwrap().image
+        );
+    }
+
+    #[test]
+    fn test_compose_service_names() {
+        let mut services = HashMap::new();
+        services.insert("db".to_string(), ComposeService::default());
+        services.insert("api".to_string(), ComposeService::default());
+        services.insert("web".to_string(), ComposeService::default());
+
+        let compose = ComposeFile { version: None, services, networks: None, volumes: None };
+
+        let names = compose.service_names();
+        assert_eq!(names.len(), 3);
+
+        let name_set: std::collections::HashSet<&str> = names.iter().map(|n| n.as_str()).collect();
+        assert!(name_set.contains("db"));
+        assert!(name_set.contains("api"));
+        assert!(name_set.contains("web"));
+    }
+
+    #[test]
+    fn test_compose_service_default() {
+        let svc = ComposeService::default();
+        assert!(svc.image.is_none());
+        assert!(svc.command.is_none());
+        assert!(svc.depends_on.is_none());
+        assert!(svc.environment.is_none());
+        assert!(svc.ports.is_none());
+        assert!(svc.volumes.is_none());
+    }
+
+    #[test]
+    fn test_ordered_services_empty() {
+        let compose =
+            ComposeFile { version: None, services: HashMap::new(), networks: None, volumes: None };
+        let ordered = compose.ordered_services();
+        assert!(ordered.is_empty());
+        assert_eq!(ordered.len(), 0);
+    }
+
+    #[test]
+    fn test_compose_service_field_access() {
+        let mut env = HashMap::new();
+        env.insert("POSTGRES_DB".to_string(), "test".to_string());
+
+        let svc = ComposeService {
+            image: Some("postgres:15".to_string()),
+            environment: Some(env),
+            ports: Some(vec!["5432:5432".to_string()]),
+            ..Default::default()
+        };
+
+        assert_eq!(svc.image.as_deref(), Some("postgres:15"));
+        assert!(svc.environment.is_some());
+        assert_eq!(
+            svc.environment.as_ref().and_then(|e| e.get("POSTGRES_DB").map(|s| s.as_str())),
+            Some("test")
+        );
+        assert!(svc.ports.is_some());
+        assert_eq!(svc.ports.as_ref().unwrap().len(), 1);
+        assert_eq!(svc.ports.as_ref().unwrap()[0], "5432:5432");
+    }
+
+    #[test]
+    fn test_compose_dependencies_count() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx".to_string());
+        web.depends_on = Some(vec!["db".to_string(), "api".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let mut db = ComposeService::default();
+        db.image = Some("postgres".to_string());
+        services.insert("db".to_string(), db);
+
+        let mut api = ComposeService::default();
+        api.image = Some("myapi".to_string());
+        services.insert("api".to_string(), api);
+
+        let compose = ComposeFile {
+            version: Some("3.8".to_string()),
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 3);
+
+        // web should have 2 deps: db and api
+        let web_svc = ordered
+            .iter()
+            .find(|s| s.image.as_deref() == Some("nginx"))
+            .expect("web service should be present");
+        let web_deps = web_svc.depends_on.as_ref().expect("web should have depends_on");
+        assert_eq!(web_deps.len(), 2);
+        assert!(web_deps.contains(&"db".to_string()));
+        assert!(web_deps.contains(&"api".to_string()));
+
+        // db should have no deps
+        let db_svc = compose.services.get("db").expect("db service should be present");
+        assert!(db_svc.depends_on.is_none());
+
+        // api should have no deps
+        let api_svc = compose.services.get("api").expect("api service should be present");
+        assert!(api_svc.depends_on.is_none());
+    }
 }
