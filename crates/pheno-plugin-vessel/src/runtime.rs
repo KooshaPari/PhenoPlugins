@@ -471,4 +471,69 @@ mod tests {
         assert_eq!(config.image, "nginx:latest");
         assert_eq!(config.name, Some("test".to_string()));
     }
+
+    #[test]
+    fn test_port_mapping_creation() {
+        let mapping = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+
+        assert_eq!(mapping.host_port, 8080);
+        assert_eq!(mapping.container_port, 80);
+        assert!(matches!(mapping.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_port_mapping_udp_protocol() {
+        let mapping = PortMapping {
+            host_port: 53,
+            container_port: 53,
+            protocol: Protocol::Udp,
+        };
+
+        assert_eq!(mapping.host_port, 53);
+        assert_eq!(mapping.container_port, 53);
+        assert!(matches!(mapping.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_creation() {
+        let ro = VolumeMapping {
+            host_path: "/host".to_string(),
+            container_path: "/container".to_string(),
+            read_only: true,
+        };
+        assert_eq!(ro.host_path, "/host");
+        assert_eq!(ro.container_path, "/container");
+        assert!(ro.read_only);
+
+        let rw = VolumeMapping {
+            host_path: "/data".to_string(),
+            container_path: "/app/data".to_string(),
+            read_only: false,
+        };
+        assert_eq!(rw.host_path, "/data");
+        assert_eq!(rw.container_path, "/app/data");
+        assert!(!rw.read_only);
+    }
+
+    #[test]
+    fn test_protocol_debug_and_copy() {
+        let tcp = Protocol::Tcp;
+        assert_eq!(format!("{:?}", tcp), "Tcp");
+        let udp = Protocol::Udp;
+        assert_eq!(format!("{:?}", udp), "Udp");
+
+        let moved = tcp;
+        assert!(matches!(tcp, Protocol::Tcp));
+        assert!(matches!(moved, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_docker_runtime_default_trait() {
+        let runtime: DockerRuntime = Default::default();
+        assert_eq!(runtime.name(), "docker");
+    }
 }

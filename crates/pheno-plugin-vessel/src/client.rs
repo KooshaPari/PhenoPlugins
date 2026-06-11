@@ -128,3 +128,64 @@ pub enum ContainerError {
     #[error("Operation failed: {0}")]
     OperationFailed(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::DockerRuntime;
+
+    #[test]
+    fn test_container_client_new() {
+        let client = ContainerClient::new(DockerRuntime::new());
+        assert_eq!(client.runtime_name(), "docker");
+    }
+
+    #[test]
+    fn test_container_client_runtime_name() {
+        let client = ContainerClient::new(DockerRuntime::new());
+        assert_eq!(client.runtime_name(), "docker");
+        assert!(!client.runtime_name().is_empty());
+    }
+
+    #[test]
+    fn test_container_error_display() {
+        let not_found = ContainerError::NotFound("my-container".to_string());
+        let not_found_str = format!("{}", not_found);
+        assert!(not_found_str.contains("not found"));
+        assert!(not_found_str.contains("my-container"));
+
+        let already_exists = ContainerError::AlreadyExists("my-container".to_string());
+        let already_exists_str = format!("{}", already_exists);
+        assert!(already_exists_str.contains("already exists"));
+        assert!(already_exists_str.contains("my-container"));
+
+        let operation_failed = ContainerError::OperationFailed("something broke".to_string());
+        let operation_failed_str = format!("{}", operation_failed);
+        assert!(operation_failed_str.contains("failed"));
+        assert!(operation_failed_str.contains("something broke"));
+    }
+
+    #[test]
+    fn test_container_error_from() {
+        let container_err = ContainerError::NotFound("abc".to_string());
+        let v: VesselError = container_err.into();
+        match v {
+            VesselError::Container(ContainerError::NotFound(s)) => {
+                assert_eq!(s, "abc");
+            }
+            other => panic!("Expected VesselError::Container(NotFound), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_container_client_default_runtime() {
+        let client = ContainerClient::new(DockerRuntime);
+        assert_eq!(client.runtime_name(), "docker");
+    }
+
+    #[tokio::test]
+    async fn test_container_client_is_available_returns_bool() {
+        let client = ContainerClient::new(DockerRuntime);
+        let _: bool = client.is_available().await;
+    }
+}

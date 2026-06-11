@@ -109,4 +109,111 @@ mod tests {
         assert!(container.is_running());
         assert!(!container.is_stopped());
     }
+
+    #[test]
+    fn test_container_status_all_displays() {
+        assert_eq!(ContainerStatus::Created.to_string(), "created");
+        assert_eq!(ContainerStatus::Running.to_string(), "running");
+        assert_eq!(ContainerStatus::Paused.to_string(), "paused");
+        assert_eq!(ContainerStatus::Restarting.to_string(), "restarting");
+        assert_eq!(ContainerStatus::Removing.to_string(), "removing");
+        assert_eq!(ContainerStatus::Exited.to_string(), "exited");
+        assert_eq!(ContainerStatus::Dead.to_string(), "dead");
+    }
+
+    #[test]
+    fn test_container_status_serde_roundtrip() {
+        let variants = [
+            ContainerStatus::Created,
+            ContainerStatus::Running,
+            ContainerStatus::Paused,
+            ContainerStatus::Restarting,
+            ContainerStatus::Removing,
+            ContainerStatus::Exited,
+            ContainerStatus::Dead,
+        ];
+        for v in variants {
+            let serialized = serde_yaml::to_string(&v).expect("serialize");
+            let back: ContainerStatus =
+                serde_yaml::from_str(&serialized).expect("deserialize");
+            assert_eq!(back, v);
+        }
+    }
+
+    #[test]
+    fn test_container_is_stopped() {
+        let mk = |id: &str, status: ContainerStatus| Container {
+            id: id.to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status,
+        };
+
+        // Exited and Dead are stopped.
+        assert!(mk("1", ContainerStatus::Exited).is_stopped());
+        assert!(!mk("2", ContainerStatus::Exited).is_running());
+        assert!(mk("3", ContainerStatus::Dead).is_stopped());
+        assert!(!mk("4", ContainerStatus::Dead).is_running());
+
+        // All other statuses are not stopped.
+        assert!(!mk("5", ContainerStatus::Running).is_stopped());
+        assert!(!mk("6", ContainerStatus::Created).is_stopped());
+        assert!(!mk("7", ContainerStatus::Paused).is_stopped());
+    }
+
+    #[test]
+    fn test_container_config_defaults() {
+        let cfg = ContainerConfig::default();
+        assert_eq!(cfg.image, "");
+        assert!(cfg.name.is_none());
+        assert!(cfg.env.is_empty());
+        assert!(cfg.cmd.is_none());
+        assert!(cfg.workdir.is_none());
+    }
+
+    #[test]
+    fn test_container_config_fields() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("BAZ".to_string(), "qux".to_string());
+
+        let cfg = ContainerConfig {
+            image: "nginx:latest".to_string(),
+            name: Some("web".to_string()),
+            env,
+            cmd: Some(vec![
+                "nginx".to_string(),
+                "-g".to_string(),
+                "daemon off;".to_string(),
+            ]),
+            workdir: Some("/app".to_string()),
+        };
+
+        assert_eq!(cfg.image, "nginx:latest");
+        assert_eq!(cfg.name.as_deref(), Some("web"));
+        assert_eq!(cfg.env.get("FOO").map(String::as_str), Some("bar"));
+        assert_eq!(cfg.env.get("BAZ").map(String::as_str), Some("qux"));
+        assert_eq!(cfg.env.len(), 2);
+        assert_eq!(
+            cfg.cmd.as_deref(),
+            Some(["nginx", "-g", "daemon off;"].map(String::from).as_slice())
+        );
+        assert_eq!(cfg.workdir.as_deref(), Some("/app"));
+    }
+
+    #[test]
+    fn test_container_status_equality() {
+        assert_eq!(ContainerStatus::Running, ContainerStatus::Running);
+        assert_eq!(ContainerStatus::Exited, ContainerStatus::Exited);
+        assert_eq!(ContainerStatus::Created, ContainerStatus::Created);
+        assert_eq!(ContainerStatus::Paused, ContainerStatus::Paused);
+        assert_eq!(ContainerStatus::Restarting, ContainerStatus::Restarting);
+        assert_eq!(ContainerStatus::Removing, ContainerStatus::Removing);
+        assert_eq!(ContainerStatus::Dead, ContainerStatus::Dead);
+
+        assert_ne!(ContainerStatus::Running, ContainerStatus::Exited);
+        assert_ne!(ContainerStatus::Created, ContainerStatus::Dead);
+        assert_ne!(ContainerStatus::Paused, ContainerStatus::Restarting);
+        assert_ne!(ContainerStatus::Removing, ContainerStatus::Exited);
+    }
 }

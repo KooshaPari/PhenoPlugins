@@ -262,3 +262,120 @@ pub trait StoragePlugin: AdapterPlugin {
         feature_id: i64,
     ) -> PluginResult<Vec<serde_json::Value>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_plugin_config_construction_and_clone() {
+        let cfg = PluginConfig {
+            name: "x".to_string(),
+            version: "1.0".to_string(),
+            adapter_config: serde_json::json!({}),
+        };
+        assert_eq!(cfg.name, "x");
+        assert_eq!(cfg.version, "1.0");
+        assert_eq!(cfg.adapter_config, serde_json::json!({}));
+
+        let cloned = cfg.clone();
+        assert_eq!(cloned.name, cfg.name);
+        assert_eq!(cloned.version, cfg.version);
+        assert_eq!(cloned.adapter_config, cfg.adapter_config);
+
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("x"), "debug output should contain name 'x': {}", dbg);
+        assert!(
+            dbg.contains("1.0"),
+            "debug output should contain version '1.0': {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn test_plugin_config_serde_roundtrip() {
+        let original = PluginConfig {
+            name: "git".to_string(),
+            version: "0.1.0".to_string(),
+            adapter_config: serde_json::json!({"key": "value"}),
+        };
+
+        // Sanity-check that the JSON is valid by successfully serializing.
+        let json_str = serde_json::to_string(&original).expect("serialize should succeed");
+        assert!(!json_str.is_empty(), "serialized JSON should not be empty");
+        // Re-parse to ensure the produced JSON is itself valid JSON.
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized output should be valid JSON");
+        assert_eq!(reparsed["name"], "git");
+        assert_eq!(reparsed["version"], "0.1.0");
+        assert_eq!(reparsed["adapter_config"]["key"], "value");
+
+        let deserialized: PluginConfig =
+            serde_json::from_str(&json_str).expect("deserialize should succeed");
+        assert_eq!(deserialized.name, original.name);
+        assert_eq!(deserialized.version, original.version);
+        assert_eq!(deserialized.adapter_config, original.adapter_config);
+    }
+
+    #[test]
+    fn test_plugin_config_default_adapter_config() {
+        // JSON payload intentionally omits `adapter_config` to exercise `#[serde(default)]`.
+        let json_str = r#"{"name":"x","version":"1.0"}"#;
+        let cfg: PluginConfig =
+            serde_json::from_str(json_str).expect("deserialize should succeed");
+
+        assert_eq!(cfg.name, "x");
+        assert_eq!(cfg.version, "1.0");
+        assert!(
+            cfg.adapter_config.is_null(),
+            "adapter_config should default to Null when missing, got: {}",
+            cfg.adapter_config
+        );
+    }
+
+    #[test]
+    fn test_worktree_info_construction() {
+        let info = WorktreeInfo {
+            path: PathBuf::from("/tmp/x"),
+            branch: "main".to_string(),
+            feature_slug: "f".to_string(),
+            wp_id: "w".to_string(),
+        };
+        assert_eq!(info.path, PathBuf::from("/tmp/x"));
+        assert_eq!(info.branch, "main");
+        assert_eq!(info.feature_slug, "f");
+        assert_eq!(info.wp_id, "w");
+    }
+
+    #[test]
+    fn test_merge_result_construction() {
+        // Empty conflicts case.
+        let ok = MergeResult {
+            success: true,
+            conflicts: vec![],
+            merged_commit: Some("abc123".to_string()),
+        };
+        assert!(ok.success);
+        assert!(ok.conflicts.is_empty());
+        assert_eq!(ok.merged_commit.as_deref(), Some("abc123"));
+
+        // With a single conflict and no merged commit.
+        let conflict = ConflictInfo {
+            path: "x.rs".to_string(),
+            ours: Some("a".to_string()),
+            theirs: Some("b".to_string()),
+        };
+        let failed = MergeResult {
+            success: false,
+            conflicts: vec![conflict],
+            merged_commit: None,
+        };
+        assert!(!failed.success);
+        assert_eq!(failed.conflicts.len(), 1);
+        assert_eq!(failed.conflicts[0].path, "x.rs");
+        assert_eq!(failed.conflicts[0].ours.as_deref(), Some("a"));
+        assert_eq!(failed.conflicts[0].theirs.as_deref(), Some("b"));
+        assert!(failed.merged_commit.is_none());
+    }
+}
