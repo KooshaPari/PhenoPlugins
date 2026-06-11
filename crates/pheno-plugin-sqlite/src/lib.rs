@@ -531,4 +531,37 @@ mod tests {
         let plugin = create_test_plugin();
         assert_eq!(plugin.db_path(), Path::new(":memory:"));
     }
+
+    #[test]
+    fn test_adapter_identity() {
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.name(), "sqlite-storage");
+        assert_eq!(plugin.version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_connection_accessor() {
+        let plugin = create_test_plugin();
+        let conn = plugin.connection();
+        let guard = conn.lock().unwrap();
+        let result: Result<i64, _> = guard.query_row("SELECT 1", [], |row| Ok(row.get::<_, i64>(0)?));
+        assert_eq!(result, Ok(1));
+    }
+
+    #[test]
+    fn test_missing_rows() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Unknown slug should return None
+            assert!(plugin.get_feature_by_slug("does-not-exist").await.unwrap().is_none());
+
+            // Unknown work package id should return None
+            assert!(plugin.get_work_package(9999).await.unwrap().is_none());
+
+            // Unknown feature id should return an empty audit trail
+            assert!(plugin.get_audit_trail(9999).await.unwrap().is_empty());
+        });
+    }
 }
