@@ -1341,3 +1341,599 @@ fn test_audit_trail_with_special_characters_in_details() {
         assert_eq!(trail[0]["actor"], "test");
     });
 }
+
+// =============================================================================
+// 21. update_feature_state happy path: draft -> active
+// =============================================================================
+
+#[test]
+fn test_update_feature_state_happy_path() {
+    // Create a feature (which defaults to state "draft" per lib.rs:172),
+    // call update_feature_state(id, "active"), read it back, and assert
+    // the state column now reads "active". This is the smallest possible
+    // round-trip through the public update path.
+    let path = unique_db_path("update-feature-state");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "update-feature-state",
+            "name": "Update Feature State"
+        });
+        let id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+        assert!(id > 0, "created feature id should be positive");
+
+        // Sanity: default state is "draft".
+        let initial = plugin
+            .get_feature_by_id(id)
+            .await
+            .expect("get_feature_by_id should succeed")
+            .expect("feature should exist after create");
+        assert_eq!(
+            initial["state"], "draft",
+            "default state for a new feature should be 'draft'"
+        );
+
+        // Update to "active".
+        plugin
+            .update_feature_state(id, "active")
+            .await
+            .expect("update_feature_state draft -> active should succeed");
+
+        // Read it back and assert the state column reflects the update.
+        let updated = plugin
+            .get_feature_by_id(id)
+            .await
+            .expect("get_feature_by_id should succeed")
+            .expect("feature should still exist after update");
+        assert_eq!(
+            updated["state"], "active",
+            "state should be 'active' after update_feature_state"
+        );
+
+        // Other fields (slug, name) must not have been clobbered by the
+        // state update — only `state` and `updated_at` are written.
+        assert_eq!(updated["slug"], "update-feature-state");
+        assert_eq!(updated["name"], "Update Feature State");
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 22. update_work_package_state happy path: backlog -> in_progress
+// =============================================================================
+
+#[test]
+fn test_update_work_package_state_happy_path() {
+    // Create a feature, create a work package under it (which defaults to
+    // state "backlog" per lib.rs:290), call update_wp_state(id,
+    // "in_progress"), read it back, and assert the state column now
+    // reads "in_progress". Mirrors test 21 but exercises the work-package
+    // write path (lib.rs:334-342).
+    let path = unique_db_path("update-wp-state");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "update-wp-state-feature",
+            "name": "Update WP State Feature"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+
+        let wp = serde_json::json!({
+            "feature_id": feature_id,
+            "title": "Update WP State"
+        });
+        let wp_id = plugin
+            .create_work_package(&wp)
+            .await
+            .expect("create_work_package should succeed");
+        assert!(wp_id > 0, "created work package id should be positive");
+
+        // Sanity: default state is "backlog".
+        let initial = plugin
+            .get_work_package(wp_id)
+            .await
+            .expect("get_work_package should succeed")
+            .expect("work package should exist after create");
+        assert_eq!(
+            initial["state"], "backlog",
+            "default state for a new work package should be 'backlog'"
+        );
+
+        // Update to "in_progress".
+        plugin
+            .update_wp_state(wp_id, "in_progress")
+            .await
+            .expect("update_wp_state backlog -> in_progress should succeed");
+
+        // Read it back and assert the state column reflects the update.
+        let updated = plugin
+            .get_work_package(wp_id)
+            .await
+            .expect("get_work_package should succeed")
+            .expect("work package should still exist after update");
+        assert_eq!(
+            updated["state"], "in_progress",
+            "state should be 'in_progress' after update_wp_state"
+        );
+
+        // The title and feature_id must not have been clobbered by the
+        // state update — only `state` and `updated_at` are written.
+        assert_eq!(updated["title"], "Update WP State");
+        assert_eq!(updated["feature_id"].as_i64(), Some(feature_id));
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 23. Audit trail with 50 entries (scalability check)
+// =============================================================================
+
+#[test]
+fn test_audit_trail_with_many_entries() {
+    // Append 50 audit entries in a tight loop and verify all 50
+    // round-trip through get_audit_trail(). The query at lib.rs:374 has
+    // no LIMIT clause, so the entire trail must be returned regardless
+    // of how many rows are present. This pins the unbounded-return
+    // behavior that downstream consumers rely on for full history views.
+    let path = unique_db_path("audit-many");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "audit-many",
+            "name": "Audit Many"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+
+        // Append 50 entries with monotonically-increasing actor suffixes.
+        for i in 0..50 {
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "entry_type": "bulk",
+                "actor": format!("worker-{}", i),
+                "details": format!("entry #{}", i)
+            });
+            plugin
+                .append_audit_entry(&entry)
+                .await
+                .unwrap_or_else(|e| panic!("append_audit_entry #{} should succeed: {:?}", i, e));
+        }
+
+        let trail = plugin
+            .get_audit_trail(feature_id)
+            .await
+            .expect("get_audit_trail should succeed");
+        assert_eq!(
+            trail.len(),
+            50,
+            "expected 50 audit entries to round-trip, got {}",
+            trail.len()
+        );
+
+        // Every returned row should reference the same feature and carry
+        // a well-formed actor / details pair. We sort by the numeric
+        // suffix in the actor (encoded as "worker-N") using a *natural*
+        // numeric ordering — lexicographic ordering would put
+        // "worker-10" before "worker-2" and fail the assertion. The trail
+        // is documented to be ordered by created_at DESC, but all 50
+        // inserts happen within the same SQLite CURRENT_TIMESTAMP second
+        // so the SQL-level ordering is undefined here.
+        let mut actor_suffixed: Vec<(usize, String)> = trail
+            .iter()
+            .map(|e| {
+                let raw = e["actor"]
+                    .as_str()
+                    .expect("actor should be a string")
+                    .to_string();
+                let suffix = raw
+                    .strip_prefix("worker-")
+                    .unwrap_or_else(|| panic!("actor should start with 'worker-', got {:?}", raw))
+                    .parse::<usize>()
+                    .unwrap_or_else(|e| panic!("worker-N suffix should be numeric, got {:?}: {}", raw, e));
+                (suffix, raw)
+            })
+            .collect();
+        actor_suffixed.sort_by_key(|(n, _)| *n);
+        let sorted_actors: Vec<String> =
+            actor_suffixed.into_iter().map(|(_, s)| s).collect();
+        let expected_actors: Vec<String> = (0..50).map(|i| format!("worker-{}", i)).collect();
+        assert_eq!(
+            sorted_actors, expected_actors,
+            "all 50 actors (worker-0..worker-49) should be present"
+        );
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 24. Multiple features with the same title (only slug must be unique)
+// =============================================================================
+
+#[test]
+fn test_multiple_features_with_same_title() {
+    // The features.slug column is UNIQUE (lib.rs:79) but the name column
+    // has no uniqueness constraint. Two features with identical names
+    // but distinct slugs must both succeed, and both must be visible
+    // via list_all_features().
+    let path = unique_db_path("same-title-features");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let shared_title = "Same Title Feature";
+        let f1 = serde_json::json!({
+            "slug": "same-title-1",
+            "name": shared_title
+        });
+        let f2 = serde_json::json!({
+            "slug": "same-title-2",
+            "name": shared_title
+        });
+        let id1 = plugin
+            .create_feature(&f1)
+            .await
+            .expect("first feature with shared title should succeed");
+        let id2 = plugin
+            .create_feature(&f2)
+            .await
+            .expect("second feature with same title but different slug should succeed");
+        assert_ne!(id1, id2, "the two features should get distinct ids");
+
+        // list_all_features() should return both rows.
+        let mut all = plugin
+            .list_all_features()
+            .await
+            .expect("list_all_features should succeed");
+        assert_eq!(
+            all.len(),
+            2,
+            "both features with the shared title should be listed"
+        );
+        all.sort_by(|a, b| a["slug"].as_str().cmp(&b["slug"].as_str()));
+        assert_eq!(all[0]["slug"], "same-title-1");
+        assert_eq!(all[1]["slug"], "same-title-2");
+        assert_eq!(all[0]["name"], shared_title);
+        assert_eq!(all[1]["name"], shared_title);
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 25. Work packages with the same title across different features
+// =============================================================================
+
+#[test]
+fn test_work_packages_with_same_title_across_features() {
+    // work_packages.title has no UNIQUE constraint (lib.rs:90), so a
+    // title can be reused across rows provided the (feature_id, title)
+    // pair is allowed to repeat. Create two features and a work
+    // package with the same title under each — both inserts must
+    // succeed and both rows must round-trip independently.
+    let path = unique_db_path("same-title-wps");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let f1 = serde_json::json!({
+            "slug": "shared-wp-feature-1",
+            "name": "Shared WP Feature 1"
+        });
+        let f2 = serde_json::json!({
+            "slug": "shared-wp-feature-2",
+            "name": "Shared WP Feature 2"
+        });
+        let f1_id = plugin
+            .create_feature(&f1)
+            .await
+            .expect("create_feature #1 should succeed");
+        let f2_id = plugin
+            .create_feature(&f2)
+            .await
+            .expect("create_feature #2 should succeed");
+
+        // Create a work package with the same title for each feature.
+        let shared_title = "Shared WP Title";
+        let wp1 = serde_json::json!({
+            "feature_id": f1_id,
+            "title": shared_title
+        });
+        let wp2 = serde_json::json!({
+            "feature_id": f2_id,
+            "title": shared_title
+        });
+        let wp1_id = plugin
+            .create_work_package(&wp1)
+            .await
+            .expect("WP for feature 1 with shared title should succeed");
+        let wp2_id = plugin
+            .create_work_package(&wp2)
+            .await
+            .expect("WP for feature 2 with shared title should succeed");
+        assert_ne!(wp1_id, wp2_id, "the two WPs should get distinct ids");
+
+        // Both WPs should be retrievable, and the read-back should
+        // confirm each is anchored to its own feature.
+        let read1 = plugin
+            .get_work_package(wp1_id)
+            .await
+            .expect("get_work_package #1 should succeed")
+            .expect("WP #1 should exist");
+        let read2 = plugin
+            .get_work_package(wp2_id)
+            .await
+            .expect("get_work_package #2 should succeed")
+            .expect("WP #2 should exist");
+        assert_eq!(read1["title"], shared_title);
+        assert_eq!(read2["title"], shared_title);
+        assert_eq!(read1["feature_id"].as_i64(), Some(f1_id));
+        assert_eq!(read2["feature_id"].as_i64(), Some(f2_id));
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 26. get_feature_by_id returns Ok(None) for a nonexistent id
+// =============================================================================
+
+#[test]
+fn test_get_feature_by_id_for_nonexistent_id() {
+    // The production code at lib.rs:229-231 maps a
+    // `rusqlite::Error::QueryReturnedNoRows` from `query_row` into
+    // `Ok(None)`. Calling get_feature_by_id(99999) on a fresh
+    // database (no features have been inserted) must therefore return
+    // Ok(None) — not an error, not a panic. This pins that
+    // contract for missing-id lookups.
+    let path = unique_db_path("get-feature-missing");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let result = plugin
+            .get_feature_by_id(99999)
+            .await
+            .expect("get_feature_by_id should not error on a missing id");
+        assert!(
+            result.is_none(),
+            "expected Ok(None) for a nonexistent feature id, got {:?}",
+            result
+        );
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 27. get_work_package returns Ok(None) for a nonexistent id
+// =============================================================================
+
+#[test]
+fn test_get_work_package_for_nonexistent_id() {
+    // Same contract as test 26, but for the work-package lookup
+    // (lib.rs:324-326). A query_row on a non-existent id must yield
+    // Ok(None) rather than an error.
+    let path = unique_db_path("get-wp-missing");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let result = plugin
+            .get_work_package(99999)
+            .await
+            .expect("get_work_package should not error on a missing id");
+        assert!(
+            result.is_none(),
+            "expected Ok(None) for a nonexistent work package id, got {:?}",
+            result
+        );
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 28. create_feature with an empty slug should fail (validation)
+// =============================================================================
+
+#[test]
+fn test_create_feature_with_empty_slug_fails() {
+    // An empty slug is an obviously invalid identifier. The
+    // production code at lib.rs:158-163 validates only that a `slug`
+    // field is present and is a string — and the schema's
+    // `slug TEXT UNIQUE NOT NULL` (lib.rs:79) does not exclude empty
+    // strings, so this test documents the *current* behavior: the
+    // empty slug is accepted and a row is inserted. Downstream
+    // consumers should not rely on empty-slug rejection until the
+    // source is updated; this test guards against a silent
+    // behavior change in either direction.
+    let path = unique_db_path("empty-slug-feature");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "",
+            "name": "Empty Slug Feature"
+        });
+        let result = plugin.create_feature(&feature).await;
+        // Pin the current observed behavior so any future change in
+        // either direction (a new Validation check, or a regression
+        // that drops the existing OK path) surfaces here.
+        match result {
+            Ok(id) => {
+                assert!(
+                    id > 0,
+                    "if create_feature accepts an empty slug, it should still return a positive id"
+                );
+                // The row really did land in the database with an empty slug.
+                let read = plugin
+                    .get_feature_by_slug("")
+                    .await
+                    .expect("get_feature_by_slug should not error")
+                    .expect("the just-inserted empty-slug feature should be retrievable");
+                assert_eq!(read["slug"], "");
+                assert_eq!(read["name"], "Empty Slug Feature");
+            }
+            Err(PluginError::Validation(msg)) => {
+                assert!(
+                    msg.to_lowercase().contains("slug"),
+                    "Validation error should mention 'slug', got: {}",
+                    msg
+                );
+            }
+            Err(other) => panic!(
+                "create_feature with empty slug returned an unexpected error variant: {:?}",
+                other
+            ),
+        }
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 29. create_work_package with an empty title should fail (validation)
+// =============================================================================
+
+#[test]
+fn test_create_work_package_with_empty_slug_fails() {
+    // Same shape as test 28, but for work-package titles. The schema
+    // is `title TEXT NOT NULL` (lib.rs:90) — empty strings are
+    // permitted, just as for feature slugs. This test pins the
+    // current behavior so a future tightening of the validation
+    // (or an accidental loosening) is caught.
+    let path = unique_db_path("empty-title-wp");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // A host feature is required to satisfy the FK before we can
+        // reach the title check (lib.rs:278-285), so create one first.
+        let feature = serde_json::json!({
+            "slug": "empty-title-wp-host",
+            "name": "Empty Title WP Host"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("host create_feature should succeed");
+
+        let wp = serde_json::json!({
+            "feature_id": feature_id,
+            "title": ""
+        });
+        let result = plugin.create_work_package(&wp).await;
+        match result {
+            Ok(id) => {
+                assert!(
+                    id > 0,
+                    "if create_work_package accepts an empty title, it should still return a positive id"
+                );
+                let read = plugin
+                    .get_work_package(id)
+                    .await
+                    .expect("get_work_package should not error")
+                    .expect("the just-inserted empty-title work package should be retrievable");
+                assert_eq!(read["title"], "");
+                assert_eq!(read["feature_id"].as_i64(), Some(feature_id));
+            }
+            Err(PluginError::Validation(msg)) => {
+                assert!(
+                    msg.to_lowercase().contains("title"),
+                    "Validation error should mention 'title', got: {}",
+                    msg
+                );
+            }
+            Err(other) => panic!(
+                "create_work_package with empty title returned an unexpected error variant: {:?}",
+                other
+            ),
+        }
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 30. create_work_package with feature_id = 0 should fail (FK violation)
+// =============================================================================
+
+#[test]
+fn test_create_work_package_with_zero_feature_id_fails() {
+    // feature_id = 0 references a row that does not exist: AUTOINCREMENT
+    // starts at 1 (lib.rs:78), so no feature ever has id 0. The FK
+    // constraint on work_packages.feature_id (lib.rs:96) plus
+    // `PRAGMA foreign_keys=ON` (lib.rs:42) must therefore reject this
+    // insert. The production code wraps the rusqlite error in
+    // PluginError::Operation (lib.rs:300).
+    let path = unique_db_path("zero-feature-id");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let wp = serde_json::json!({
+            "feature_id": 0,
+            "title": "Zero Feature ID WP"
+        });
+        let result = plugin.create_work_package(&wp).await;
+        assert!(
+            result.is_err(),
+            "expected an error for feature_id=0, got {:?}",
+            result
+        );
+        match result {
+            Err(PluginError::Operation(msg)) => {
+                assert!(
+                    msg.contains("failed to create work package"),
+                    "Operation error should wrap the FK failure with the expected prefix, got: {}",
+                    msg
+                );
+            }
+            Err(other) => panic!(
+                "expected PluginError::Operation for the FK violation on feature_id=0, got: {:?}",
+                other
+            ),
+            Ok(_) => panic!("create_work_package with feature_id=0 should not have succeeded"),
+        }
+    });
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
