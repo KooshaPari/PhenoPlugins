@@ -338,4 +338,245 @@ mod tests {
         assert_eq!(failed.conflicts[0].theirs.as_deref(), Some("b"));
         assert!(failed.merged_commit.is_none());
     }
+
+    #[test]
+    fn test_worktree_info_debug_format() {
+        let w = WorktreeInfo {
+            path: PathBuf::from("/tmp/wt"),
+            branch: "main".to_string(),
+            feature_slug: "feat-1".to_string(),
+            wp_id: "WP-1".to_string(),
+        };
+        let dbg = format!("{:?}", w);
+        assert!(
+            dbg.contains("WorktreeInfo"),
+            "debug output should contain 'WorktreeInfo': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("/tmp/wt"),
+            "debug output should contain path '/tmp/wt': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("main"),
+            "debug output should contain branch 'main': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("WP-1"),
+            "debug output should contain wp_id 'WP-1': {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn test_worktree_info_clone() {
+        let original = WorktreeInfo {
+            path: PathBuf::from("/tmp/wt"),
+            branch: "main".to_string(),
+            feature_slug: "feat-1".to_string(),
+            wp_id: "WP-1".to_string(),
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.path, original.path);
+        assert_eq!(cloned.branch, original.branch);
+        assert_eq!(cloned.feature_slug, original.feature_slug);
+        assert_eq!(cloned.wp_id, original.wp_id);
+    }
+
+    #[test]
+    fn test_merge_result_debug_format() {
+        let m = MergeResult {
+            success: true,
+            conflicts: vec![],
+            merged_commit: Some("abc".to_string()),
+        };
+        let dbg = format!("{:?}", m);
+        assert!(
+            dbg.contains("MergeResult"),
+            "debug output should contain 'MergeResult': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("true"),
+            "debug output should contain 'true': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("abc"),
+            "debug output should contain merged_commit 'abc': {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn test_merge_result_clone() {
+        let conflict = ConflictInfo {
+            path: "src/lib.rs".to_string(),
+            ours: Some("ours-content".to_string()),
+            theirs: Some("theirs-content".to_string()),
+        };
+        let original = MergeResult {
+            success: false,
+            conflicts: vec![conflict],
+            merged_commit: None,
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.success, original.success);
+        assert_eq!(cloned.conflicts.len(), original.conflicts.len());
+        assert_eq!(cloned.conflicts[0].path, original.conflicts[0].path);
+        assert_eq!(cloned.conflicts[0].ours, original.conflicts[0].ours);
+        assert_eq!(cloned.conflicts[0].theirs, original.conflicts[0].theirs);
+        assert_eq!(cloned.merged_commit, original.merged_commit);
+    }
+
+    #[test]
+    fn test_plugin_config_debug_format() {
+        let c = PluginConfig {
+            name: "x".to_string(),
+            version: "1.0.0".to_string(),
+            adapter_config: serde_json::json!({}),
+        };
+        let dbg = format!("{:?}", c);
+        assert!(
+            dbg.contains("PluginConfig"),
+            "debug output should contain 'PluginConfig': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("x"),
+            "debug output should contain name 'x': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("1.0.0"),
+            "debug output should contain version '1.0.0': {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn test_feature_artifacts_default_or_empty() {
+        // `FeatureArtifacts` does not derive `Default`, so build an "empty" instance
+        // explicitly and assert that all fields are absent/empty.
+        let a = FeatureArtifacts {
+            meta_json: None,
+            audit_chain: None,
+            evidence_paths: Vec::new(),
+        };
+        assert!(a.meta_json.is_none());
+        assert!(a.audit_chain.is_none());
+        assert!(a.evidence_paths.is_empty());
+    }
+
+    #[test]
+    fn test_feature_artifacts_debug_format() {
+        let a = FeatureArtifacts {
+            meta_json: Some(r#"{"slug":"f"}"#.to_string()),
+            audit_chain: Some("audit-blob".to_string()),
+            evidence_paths: vec![
+                "evidence/a.txt".to_string(),
+                "evidence/b.txt".to_string(),
+            ],
+        };
+        let dbg = format!("{:?}", a);
+        assert!(
+            dbg.contains("FeatureArtifacts"),
+            "debug output should contain 'FeatureArtifacts': {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("meta_json"),
+            "debug output should contain 'meta_json' field name: {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("audit-blob"),
+            "debug output should contain audit chain blob: {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("evidence/a.txt"),
+            "debug output should contain evidence path: {}",
+            dbg
+        );
+        assert!(
+            dbg.contains("evidence/b.txt"),
+            "debug output should contain second evidence path: {}",
+            dbg
+        );
+    }
+
+    #[test]
+    fn test_merge_result_field_accessors() {
+        let conflict = ConflictInfo {
+            path: "src/lib.rs".to_string(),
+            ours: Some("ours-content".to_string()),
+            theirs: Some("theirs-content".to_string()),
+        };
+        let m = MergeResult {
+            success: true,
+            conflicts: vec![conflict],
+            merged_commit: Some("deadbeef".to_string()),
+        };
+
+        // Direct field accessors (`success`, `conflicts`, `merged_commit`).
+        assert!(m.success);
+        assert_eq!(m.conflicts.len(), 1);
+        assert_eq!(m.conflicts[0].path, "src/lib.rs");
+        assert_eq!(m.conflicts[0].ours.as_deref(), Some("ours-content"));
+        assert_eq!(m.conflicts[0].theirs.as_deref(), Some("theirs-content"));
+        assert_eq!(m.merged_commit.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn test_worktree_info_partial_eq() {
+        // `WorktreeInfo` does not derive `PartialEq`, so we exercise equality
+        // by comparing each field manually. Two identical values compare equal.
+        let a = WorktreeInfo {
+            path: PathBuf::from("/tmp/wt"),
+            branch: "main".to_string(),
+            feature_slug: "feat-1".to_string(),
+            wp_id: "WP-1".to_string(),
+        };
+        let b = WorktreeInfo {
+            path: PathBuf::from("/tmp/wt"),
+            branch: "main".to_string(),
+            feature_slug: "feat-1".to_string(),
+            wp_id: "WP-1".to_string(),
+        };
+        assert_eq!(a.path, b.path);
+        assert_eq!(a.branch, b.branch);
+        assert_eq!(a.feature_slug, b.feature_slug);
+        assert_eq!(a.wp_id, b.wp_id);
+
+        // Mutate one field of a clone and confirm that field no longer matches.
+        let mut c = b.clone();
+        c.wp_id = "WP-2".to_string();
+        assert_ne!(c.wp_id, a.wp_id);
+    }
+
+    #[test]
+    fn test_plugin_config_default_adapter_config_is_object() {
+        let c = PluginConfig {
+            name: "x".to_string(),
+            version: "1.0.0".to_string(),
+            adapter_config: serde_json::json!({}),
+        };
+        assert!(
+            c.adapter_config.is_object(),
+            "adapter_config should be a JSON object, got: {}",
+            c.adapter_config
+        );
+        let obj = c
+            .adapter_config
+            .as_object()
+            .expect("adapter_config should be a JSON object");
+        assert!(
+            obj.is_empty(),
+            "expected empty JSON object, got: {}",
+            c.adapter_config
+        );
+    }
 }

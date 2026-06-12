@@ -42,6 +42,7 @@ pub type PluginResult<T> = Result<T, PluginError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn test_plugin_error_display() {
@@ -159,5 +160,140 @@ mod tests {
 
         let r: PluginResult<()> = Err(PluginError::Validation("bad".into()));
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_plugin_error_debug_for_all_variants() {
+        // Each row is (variant-constructor-call, expected-variant-tag-substring-in-Debug).
+        // Debug output for an enum variant starts with the variant name, so each tag
+        // must appear in the formatted `{:?}` output.
+        let bad: serde_json::Error = serde_json::from_str::<i32>("bad").unwrap_err();
+        let io = std::io::Error::new(std::io::ErrorKind::Other, "x");
+
+        let cases: Vec<(PluginError, &str)> = vec![
+            (PluginError::Initialization("x".into()), "Initialization"),
+            (PluginError::NotFound("x".into()), "NotFound"),
+            (
+                PluginError::AlreadyRegistered("x".into()),
+                "AlreadyRegistered",
+            ),
+            (PluginError::AlreadyExists("x".into()), "AlreadyExists"),
+            (PluginError::Operation("x".into()), "Operation"),
+            (PluginError::Config("x".into()), "Config"),
+            (PluginError::Io(io), "Io"),
+            (PluginError::Serialization(bad), "Serialization"),
+            (PluginError::Execution("x".into()), "Execution"),
+            (PluginError::Validation("x".into()), "Validation"),
+        ];
+
+        for (err, tag) in cases {
+            let dbg = format!("{:?}", err);
+            assert!(
+                dbg.contains(tag),
+                "Debug output `{}` should contain variant name `{}`",
+                dbg,
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn test_plugin_error_source_chain_io() {
+        // `#[from] std::io::Error` should yield a non-None source chain.
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
+        let e: PluginError = io.into();
+        assert!(e.source().is_some());
+    }
+
+    #[test]
+    fn test_plugin_error_source_chain_serde() {
+        // `#[from] serde_json::Error` should yield a non-None source chain.
+        let s: serde_json::Error = serde_json::from_str::<i32>("bad").unwrap_err();
+        let e: PluginError = s.into();
+        assert!(e.source().is_some());
+    }
+
+    #[test]
+    fn test_plugin_error_source_for_custom_variant() {
+        // Custom (non-`#[from]`) variants have no underlying source.
+        let e = PluginError::Validation("x".into());
+        assert!(e.source().is_none());
+    }
+
+    #[test]
+    fn test_plugin_error_send_sync() {
+        // Compile-time assertion: PluginError must be Send + Sync.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PluginError>();
+    }
+
+    #[test]
+    fn test_plugin_error_display_all_variants_unique() {
+        // Every variant should produce a distinct Display string. Each `#[error(...)]`
+        // template starts with a unique prefix, so the rendered output must be unique.
+        let bad: serde_json::Error = serde_json::from_str::<i32>("bad").unwrap_err();
+        let io = std::io::Error::new(std::io::ErrorKind::Other, "io_unique_payload");
+
+        let variants: Vec<PluginError> = vec![
+            PluginError::Initialization("init_unique_payload".into()),
+            PluginError::NotFound("notfound_unique_payload".into()),
+            PluginError::AlreadyRegistered("reg_unique_payload".into()),
+            PluginError::AlreadyExists("exists_unique_payload".into()),
+            PluginError::Operation("op_unique_payload".into()),
+            PluginError::Config("cfg_unique_payload".into()),
+            PluginError::Io(io),
+            PluginError::Serialization(bad),
+            PluginError::Execution("exec_unique_payload".into()),
+            PluginError::Validation("val_unique_payload".into()),
+        ];
+
+        let original: Vec<String> = variants.iter().map(|e| format!("{}", e)).collect();
+        let mut sorted = original.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            original.len(),
+            "Expected all {} variants to have distinct Display output, but found duplicates among: {:?}",
+            original.len(),
+            original
+        );
+    }
+
+    #[test]
+    fn test_plugin_result_alias_with_string() {
+        // `PluginResult<T>` should work for any T, including owned `String`.
+        let r: PluginResult<String> = Ok("hello".into());
+        assert_eq!(r.unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_plugin_result_alias_with_vec() {
+        // `PluginResult<T>` should work for any T, including heap-allocated `Vec<u8>`.
+        let r: PluginResult<Vec<u8>> = Ok(vec![1, 2, 3]);
+        assert_eq!(r.unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_plugin_error_io_preserves_error_kind() {
+        // When converting via `#[from]`, the inner `std::io::Error` (and thus its
+        // `ErrorKind`) must be preserved on the wrapped variant.
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "x");
+        let e: PluginError = io.into();
+        if let PluginError::Io(inner) = e {
+            assert_eq!(inner.kind(), std::io::ErrorKind::PermissionDenied);
+        } else {
+            panic!("expected Io variant");
+        }
+    }
+
+    #[test]
+    fn test_plugin_error_via_map_err() {
+        // `.map_err(|e| e.into())` should cleanly convert any `std::io::Error`
+        // source into a `PluginError`.
+        let r: Result<i32, std::io::Error> =
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "x"));
+        let mapped: PluginResult<i32> = r.map_err(|e| e.into());
+        assert!(mapped.is_err());
     }
 }
