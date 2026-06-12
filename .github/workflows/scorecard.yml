@@ -7,6 +7,6 @@ on:
 permissions: read-all
 jobs:
   analysis:
-    uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@72b9c6cbdb24c49189b0e7c7395d874830d1ed87
+    uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@58a298df8b37765e3d04ff975de22d3dd88bfbd9
     with:
       publish_results: true
