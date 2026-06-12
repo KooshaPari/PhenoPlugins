@@ -788,4 +788,309 @@ mod tests {
             assert_eq!(all[2]["name"], "Feature gamma-feature");
         });
     }
+
+    #[test]
+    fn test_in_memory_constructor() {
+        // Direct in_memory() call: db_path should be ":memory:" and the
+        // adapter name should be the canonical "sqlite-storage" identifier.
+        let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+        assert_eq!(plugin.db_path(), Path::new(":memory:"));
+        assert_eq!(plugin.name(), "sqlite-storage");
+    }
+
+    #[test]
+    fn test_audit_entry_default_actor_and_type() {
+        // When `entry_type` and `actor` are omitted from the JSON, the
+        // production code at lib.rs:355 and lib.rs:359 falls back to
+        // "info" and "system" respectively.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-defaults",
+                "name": "Audit Defaults"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            // No `entry_type`, no `actor` — only feature_id and details.
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "details": "raw details"
+            });
+            plugin.append_audit_entry(&entry).await.unwrap();
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+            assert_eq!(trail[0]["entry_type"], "info");
+            assert_eq!(trail[0]["actor"], "system");
+        });
+    }
+
+    #[test]
+    fn test_multiple_audit_entries_ordering() {
+        // Append three audit entries with distinct actors; verify all
+        // three are returned and their actors / details are preserved.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-ordering",
+                "name": "Audit Ordering"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let actors = ["alice", "bob", "carol"];
+            for actor in actors.iter() {
+                let entry = serde_json::json!({
+                    "feature_id": feature_id,
+                    "entry_type": "noted",
+                    "actor": actor,
+                    "details": format!("entry-by-{}", actor)
+                });
+                plugin.append_audit_entry(&entry).await.unwrap();
+            }
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 3);
+
+            // The trail is ordered by created_at DESC, so the
+            // last-inserted entry ("carol") is first. Spot-check that
+            // the full set of actors and details is preserved across
+            // the trail (order-independent).
+            let returned_actors: Vec<&str> = trail
+                .iter()
+                .map(|e| e["actor"].as_str().expect("actor should be a string"))
+                .collect();
+            let mut returned_actors_sorted = returned_actors.clone();
+            returned_actors_sorted.sort();
+            assert_eq!(returned_actors_sorted, actors.to_vec());
+
+            // Spot-check the first entry's details preserved verbatim.
+            // NOTE: the production code at lib.rs:360 stores `details` as
+            // `entry.get("details").map(|v| v.to_string())`, which is the
+            // *JSON-serialized* form of the value (i.e. wrapped in quotes
+            // for a JSON string). The round-trip reads back the same JSON
+            // string, so we compare against the JSON-stringified form.
+            for entry in trail.iter() {
+                let actor = entry["actor"].as_str().expect("actor should be a string");
+                let details = entry["details"].as_str().expect("details should be a string");
+                let expected = serde_json::json!(format!("entry-by-{}", actor)).to_string();
+                assert_eq!(details, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn test_audit_entry_with_no_details() {
+        // When `details` is omitted, the production code at lib.rs:360
+        // maps it to None (stored as SQL NULL). The query result maps
+        // the NULL back to serde_json::Value::Null, so the JSON
+        // representation should be `null`.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-no-details",
+                "name": "Audit No Details"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "actor": "quiet"
+            });
+            let id = plugin.append_audit_entry(&entry).await.unwrap();
+            assert!(id > 0);
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+            assert!(
+                trail[0]["details"].is_null(),
+                "expected details to be JSON null when omitted, got {:?}",
+                trail[0]["details"]
+            );
+            assert_eq!(trail[0]["actor"], "quiet");
+        });
+    }
+
+    #[test]
+    fn test_update_feature_state_for_nonexistent_id() {
+        // update_feature_state at lib.rs:239 does not inspect the number
+        // of affected rows — it just executes the UPDATE and returns
+        // Ok(()). This documents the actual "fire and forget" behavior
+        // for an id that does not exist: no error, no row updated.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            plugin
+                .update_feature_state(99999, "active")
+                .await
+                .expect("update_feature_state for nonexistent id should silently succeed");
+
+            // Confirm no row was actually changed by listing features.
+            let all = plugin.list_all_features().await.unwrap();
+            assert!(
+                all.is_empty(),
+                "expected no features after updating a nonexistent id, got {}",
+                all.len()
+            );
+        });
+    }
+
+    #[test]
+    fn test_update_work_package_state_for_nonexistent_id() {
+        // Same fire-and-forget behavior as update_feature_state — see
+        // lib.rs:334. Document it for work packages.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            plugin
+                .update_wp_state(99999, "done")
+                .await
+                .expect("update_wp_state for nonexistent id should silently succeed");
+        });
+    }
+
+    #[test]
+    fn test_create_feature_duplicate_slug() {
+        // The `features.slug` column is declared UNIQUE NOT NULL
+        // (lib.rs:79). Inserting a second feature with the same slug
+        // must fail with an Operation error.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let first = serde_json::json!({
+                "slug": "dup",
+                "name": "First Dup"
+            });
+            let id1 = plugin
+                .create_feature(&first)
+                .await
+                .expect("first insert should succeed");
+            assert!(id1 > 0);
+
+            let second = serde_json::json!({
+                "slug": "dup",
+                "name": "Second Dup"
+            });
+            let result = plugin.create_feature(&second).await;
+            assert!(
+                result.is_err(),
+                "expected an error for duplicate slug, got {:?}",
+                result
+            );
+        });
+    }
+
+    #[test]
+    fn test_create_work_package_with_invalid_feature_id() {
+        // The `work_packages.feature_id` column has a foreign key to
+        // `features.id` (lib.rs:96). Inserting with a feature_id that
+        // does not exist must fail. We also try a negative id (-1) as
+        // an extra defensive case: the FK should reject it too.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Case 1: feature_id = 99999 (no such feature row).
+            let wp_orphan = serde_json::json!({
+                "feature_id": 99999,
+                "title": "orphan"
+            });
+            let result_orphan = plugin.create_work_package(&wp_orphan).await;
+            assert!(
+                result_orphan.is_err(),
+                "expected FK error for nonexistent feature_id 99999, got {:?}",
+                result_orphan
+            );
+
+            // Case 2: feature_id = -1. We need a real feature first so
+            // that a *valid* work package would otherwise succeed; the
+            // FK on -1 is the one we expect to fail.
+            let feature = serde_json::json!({
+                "slug": "fk-test",
+                "name": "FK Test"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+            let wp_neg = serde_json::json!({
+                "feature_id": -1,
+                "title": "negative"
+            });
+            let result_neg = plugin.create_work_package(&wp_neg).await;
+            assert!(
+                result_neg.is_err(),
+                "expected FK error for feature_id -1, got {:?}",
+                result_neg
+            );
+
+            // Sanity: a valid work package for the real feature still
+            // succeeds, so the negative case above really is the FK
+            // rejecting -1, not a broken connection.
+            let wp_ok = serde_json::json!({
+                "feature_id": feature_id,
+                "title": "valid"
+            });
+            plugin
+                .create_work_package(&wp_ok)
+                .await
+                .expect("valid work package should succeed");
+        });
+    }
+
+    #[test]
+    fn test_connection_accessor_arc_independence() {
+        // connection() returns Arc::clone(&self.conn); the two Arcs
+        // returned by consecutive calls must point to the *same*
+        // allocation (Arc::ptr_eq) and must share the same data.
+        let plugin = create_test_plugin();
+        let conn_a = plugin.connection();
+        let conn_b = plugin.connection();
+        assert!(
+            Arc::ptr_eq(&conn_a, &conn_b),
+            "connection() should return Arcs that share the same allocation"
+        );
+
+        // A write through one Arc should be visible through the other.
+        {
+            let guard = conn_a.lock().expect("lock poisoned");
+            guard
+                .execute("CREATE TABLE IF NOT EXISTS arc_probe (n INTEGER)", [])
+                .expect("create probe table");
+            guard
+                .execute("INSERT INTO arc_probe (n) VALUES (42)", [])
+                .expect("insert probe");
+        }
+        let observed: i64 = conn_b
+            .lock()
+            .expect("lock poisoned")
+            .query_row("SELECT n FROM arc_probe", [], |r| r.get(0))
+            .expect("select probe");
+        assert_eq!(observed, 42);
+    }
+
+    #[test]
+    fn test_list_all_features_empty() {
+        // On a fresh in-memory plugin with no inserts, list_all_features
+        // must return Ok(vec![]) — an empty list, not an error.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let all = plugin
+                .list_all_features()
+                .await
+                .expect("list_all_features on an empty db should be Ok");
+            assert!(
+                all.is_empty(),
+                "expected an empty feature list, got {} entries",
+                all.len()
+            );
+        });
+    }
 }

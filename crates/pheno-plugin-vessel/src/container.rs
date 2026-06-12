@@ -211,4 +211,141 @@ mod tests {
         assert_ne!(ContainerStatus::Paused, ContainerStatus::Restarting);
         assert_ne!(ContainerStatus::Removing, ContainerStatus::Exited);
     }
+
+    #[test]
+    fn test_container_construction_all_fields() {
+        let container = Container {
+            id: "abc123def456ghi789".to_string(),
+            name: "web".to_string(),
+            image: "nginx:1.25".to_string(),
+            status: ContainerStatus::Paused,
+        };
+        assert_eq!(container.id, "abc123def456ghi789");
+        assert_eq!(container.name, "web");
+        assert_eq!(container.image, "nginx:1.25");
+        assert_eq!(container.status, ContainerStatus::Paused);
+    }
+
+    #[test]
+    fn test_container_is_running_false_for_other_statuses() {
+        let mk = |status: ContainerStatus| Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status,
+        };
+
+        for status in [
+            ContainerStatus::Created,
+            ContainerStatus::Paused,
+            ContainerStatus::Restarting,
+            ContainerStatus::Removing,
+            ContainerStatus::Exited,
+            ContainerStatus::Dead,
+        ] {
+            let c = mk(status);
+            assert!(
+                !c.is_running(),
+                "expected {status:?} to not be running, but is_running() returned true"
+            );
+        }
+    }
+
+    #[test]
+    fn test_container_short_id_truncation() {
+        // An id longer than 12 characters is truncated to the first 12.
+        let container = Container {
+            id: "abcdefghijklmnopqrstuvwxyz".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert_eq!(container.short_id(), "abcdefghijkl");
+        assert_eq!(container.short_id().len(), 12);
+    }
+
+    #[test]
+    fn test_container_short_id_exact_length() {
+        // An id of exactly 12 characters is returned verbatim, no truncation
+        // needed.
+        let container = Container {
+            id: "abc123def456".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert_eq!(container.short_id(), "abc123def456");
+        assert_eq!(container.short_id().len(), 12);
+    }
+
+    #[test]
+    fn test_container_short_id_short_id() {
+        // An id shorter than 12 characters is returned in full.
+        let container = Container {
+            id: "abc".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert_eq!(container.short_id(), "abc");
+        assert_eq!(container.short_id().len(), 3);
+    }
+
+    #[test]
+    fn test_container_status_copy() {
+        // `ContainerStatus` derives `Copy`, so the original remains usable
+        // after binding a copy to a new variable.
+        let a = ContainerStatus::Running;
+        let b = a;
+        assert_eq!(a, b);
+        assert_eq!(a, ContainerStatus::Running);
+        assert_eq!(b, ContainerStatus::Running);
+    }
+
+    #[test]
+    fn test_container_config_clone() {
+        // `ContainerConfig` derives `Clone`, so cloning must yield a value
+        // with equal fields.
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("BAZ".to_string(), "qux".to_string());
+
+        let original = ContainerConfig {
+            image: "redis:7".to_string(),
+            name: Some("cache".to_string()),
+            env: env.clone(),
+            cmd: Some(vec!["redis-server".to_string()]),
+            workdir: Some("/data".to_string()),
+        };
+        let cloned = original.clone();
+
+        assert_eq!(original.image, cloned.image);
+        assert_eq!(original.name, cloned.name);
+        assert_eq!(original.workdir, cloned.workdir);
+        assert_eq!(original.cmd, cloned.cmd);
+        assert_eq!(original.env, cloned.env);
+        assert_eq!(original.env.len(), cloned.env.len());
+        assert_eq!(
+            original.env.get("FOO").map(String::as_str),
+            cloned.env.get("FOO").map(String::as_str)
+        );
+    }
+
+    #[test]
+    fn test_container_status_paused_is_not_stopped() {
+        // `Paused` is neither `Running` nor `Stopped` (which is defined as
+        // `Exited | Dead`). It is a third distinct lifecycle state.
+        let container = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Paused,
+        };
+        assert!(!container.is_running(), "Paused must not be running");
+        assert!(!container.is_stopped(), "Paused must not be stopped");
+        assert_eq!(container.status, ContainerStatus::Paused);
+        assert_ne!(container.status, ContainerStatus::Running);
+        assert_ne!(container.status, ContainerStatus::Exited);
+        assert_ne!(container.status, ContainerStatus::Dead);
+    }
 }

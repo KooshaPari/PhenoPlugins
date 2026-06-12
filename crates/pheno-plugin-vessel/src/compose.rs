@@ -285,4 +285,220 @@ services:
         assert_eq!(ordered.len(), 3);
         assert_eq!(compose.services["web"].depends_on.as_ref().unwrap().len(), 2);
     }
+
+    #[test]
+    fn test_build_config_construction() {
+        let mut args = HashMap::new();
+        args.insert("VERSION".to_string(), "1.0".to_string());
+
+        let build = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: Some(args),
+        };
+
+        assert_eq!(build.context.as_deref(), Some("."));
+        assert_eq!(build.dockerfile.as_deref(), Some("Dockerfile"));
+
+        let args_ref = build.args.as_ref().unwrap();
+        assert_eq!(args_ref.len(), 1);
+        assert_eq!(args_ref.get("VERSION").map(|s| s.as_str()), Some("1.0"));
+    }
+
+    #[test]
+    fn test_build_config_serde() {
+        let mut args = HashMap::new();
+        args.insert("VERSION".to_string(), "1.0".to_string());
+
+        let original = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: Some(args),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: BuildConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.context, original.context);
+        assert_eq!(parsed.dockerfile, original.dockerfile);
+        assert_eq!(parsed.args, original.args);
+    }
+
+    #[test]
+    fn test_network_config_construction() {
+        let net = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+
+        assert_eq!(net.driver.as_deref(), Some("bridge"));
+        assert_eq!(net.external, Some(false));
+    }
+
+    #[test]
+    fn test_network_config_serde() {
+        let original = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: NetworkConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.driver, original.driver);
+        assert_eq!(parsed.external, original.external);
+    }
+
+    #[test]
+    fn test_volume_config_construction() {
+        let vol = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+
+        assert_eq!(vol.driver.as_deref(), Some("local"));
+        assert_eq!(vol.external, Some(true));
+    }
+
+    #[test]
+    fn test_volume_config_serde() {
+        let original = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: VolumeConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.driver, original.driver);
+        assert_eq!(parsed.external, original.external);
+    }
+
+    #[test]
+    fn test_ordered_services_with_missing_dependency() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx".to_string());
+        web.depends_on = Some(vec!["nonexistent".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].image.as_deref(), Some("nginx"));
+        assert_eq!(
+            ordered[0].depends_on.as_deref(),
+            Some(&vec!["nonexistent".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn test_ordered_services_three_level_chain() {
+        let mut services = HashMap::new();
+
+        let mut cache = ComposeService::default();
+        cache.container_name = Some("cache".to_string());
+        services.insert("cache".to_string(), cache);
+
+        let mut db = ComposeService::default();
+        db.container_name = Some("db".to_string());
+        db.depends_on = Some(vec!["cache".to_string()]);
+        services.insert("db".to_string(), db);
+
+        let mut web = ComposeService::default();
+        web.container_name = Some("web".to_string());
+        web.depends_on = Some(vec!["db".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 3);
+
+        let names: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.container_name.as_deref().unwrap())
+            .collect();
+        let cache_idx = names.iter().position(|n| *n == "cache").unwrap();
+        let db_idx = names.iter().position(|n| *n == "db").unwrap();
+        let web_idx = names.iter().position(|n| *n == "web").unwrap();
+
+        assert!(cache_idx < db_idx, "cache should come before db");
+        assert!(db_idx < web_idx, "db should come before web");
+    }
+
+    #[test]
+    fn test_compose_with_networks_and_volumes() {
+        let mut networks = HashMap::new();
+        networks.insert(
+            "net1".to_string(),
+            NetworkConfig {
+                driver: Some("bridge".to_string()),
+                external: Some(false),
+            },
+        );
+
+        let mut volumes = HashMap::new();
+        volumes.insert(
+            "vol1".to_string(),
+            VolumeConfig {
+                driver: Some("local".to_string()),
+                external: Some(true),
+            },
+        );
+
+        let compose = ComposeFile {
+            version: Some("3.8".to_string()),
+            services: HashMap::new(),
+            networks: Some(networks),
+            volumes: Some(volumes),
+        };
+
+        assert!(compose.networks.is_some());
+        assert_eq!(compose.networks.as_ref().unwrap().len(), 1);
+        assert!(compose.networks.as_ref().unwrap().contains_key("net1"));
+
+        assert!(compose.volumes.is_some());
+        assert_eq!(compose.volumes.as_ref().unwrap().len(), 1);
+        assert!(compose.volumes.as_ref().unwrap().contains_key("vol1"));
+    }
+
+    #[test]
+    fn test_compose_service_build_field() {
+        let service = ComposeService {
+            image: None,
+            build: Some(BuildConfig {
+                context: Some("./app".to_string()),
+                dockerfile: None,
+                args: None,
+            }),
+            container_name: None,
+            environment: None,
+            ports: None,
+            volumes: None,
+            depends_on: None,
+            restart: None,
+            command: None,
+            working_dir: None,
+        };
+
+        assert_eq!(
+            service.build.as_ref().unwrap().context.as_deref(),
+            Some("./app")
+        );
+        assert!(service.build.as_ref().unwrap().dockerfile.is_none());
+        assert!(service.build.as_ref().unwrap().args.is_none());
+    }
 }

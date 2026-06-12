@@ -528,4 +528,114 @@ mod tests {
         let runtime: DockerRuntime = Default::default();
         assert_eq!(runtime.name(), "docker");
     }
+
+    #[test]
+    fn test_container_info_construction() {
+        let info = ContainerInfo {
+            id: "abc123".to_string(),
+            name: "web".to_string(),
+            image: "nginx:latest".to_string(),
+            status: "running".to_string(),
+            created: "2024-01-01".to_string(),
+        };
+        assert_eq!(info.id, "abc123");
+        assert_eq!(info.name, "web");
+        assert_eq!(info.image, "nginx:latest");
+        assert_eq!(info.status, "running");
+        assert_eq!(info.created, "2024-01-01");
+    }
+
+    #[test]
+    fn test_container_info_clone() {
+        let info = ContainerInfo {
+            id: "id1".to_string(),
+            name: "n1".to_string(),
+            image: "img1".to_string(),
+            status: "up".to_string(),
+            created: "c1".to_string(),
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.id, info.id);
+        assert_eq!(cloned.name, info.name);
+        assert_eq!(cloned.image, info.image);
+        assert_eq!(cloned.status, info.status);
+        assert_eq!(cloned.created, info.created);
+    }
+
+    #[test]
+    fn test_container_create_config_with_all_fields() {
+        let mut env = HashMap::new();
+        env.insert("A".to_string(), "1".to_string());
+        env.insert("B".to_string(), "2".to_string());
+
+        let config = ContainerCreateConfig {
+            image: "redis:7".to_string(),
+            name: Some("cache".to_string()),
+            env,
+            ports: vec![PortMapping {
+                host_port: 6379,
+                container_port: 6379,
+                protocol: Protocol::Tcp,
+            }],
+            volumes: vec![VolumeMapping {
+                host_path: "/h".to_string(),
+                container_path: "/c".to_string(),
+                read_only: false,
+            }],
+        };
+
+        assert_eq!(config.image, "redis:7");
+        assert_eq!(config.name, Some("cache".to_string()));
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("A"), Some(&"1".to_string()));
+        assert_eq!(config.env.get("B"), Some(&"2".to_string()));
+        assert_eq!(config.ports.len(), 1);
+        assert_eq!(config.ports[0].host_port, 6379);
+        assert_eq!(config.ports[0].container_port, 6379);
+        assert!(matches!(config.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.volumes.len(), 1);
+        assert_eq!(config.volumes[0].host_path, "/h");
+        assert_eq!(config.volumes[0].container_path, "/c");
+        assert!(!config.volumes[0].read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_default_values() {
+        let config = ContainerCreateConfig {
+            image: "x".to_string(),
+            name: None,
+            env: HashMap::new(),
+            ports: vec![],
+            volumes: vec![],
+        };
+        assert!(config.env.is_empty());
+        assert!(config.ports.is_empty());
+        assert!(config.volumes.is_empty());
+        assert!(config.name.is_none());
+    }
+
+    #[test]
+    fn test_podman_runtime_default_trait() {
+        let p: PodmanRuntime = Default::default();
+        assert_eq!(p.name(), "podman");
+    }
+
+    #[test]
+    fn test_podman_runtime_clone() {
+        let p1 = PodmanRuntime::new();
+        let p2 = p1.clone();
+        assert_eq!(p1.name(), p2.name());
+    }
+
+    #[test]
+    fn test_protocol_inequality() {
+        assert_ne!(format!("{:?}", Protocol::Tcp), format!("{:?}", Protocol::Udp));
+    }
+
+    #[test]
+    fn test_docker_runtime_clone() {
+        let d1 = DockerRuntime::new();
+        let d2 = d1.clone();
+        assert_eq!(d1.name(), d2.name());
+    }
 }
