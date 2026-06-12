@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "git",
+  "version": "0.1.0",
+  "description": "Git worktree VCS adapter — create/list/remove worktrees and branches.",
+  "kind": "vcs",
+  "capabilities": ["worktree", "branch", "status"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "feature_slug": { "type": "string", "description": "Feature slug for the worktree" },
+      "wp_id": { "type": "string", "description": "Work-package identifier" }
+    },
+    "required": ["feature_slug", "wp_id"]
+  },
+  "entrypoint": "pheno-plugin-git"
+}

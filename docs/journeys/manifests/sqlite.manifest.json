@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "sqlite",
+  "version": "0.1.0",
+  "description": "SQLite storage adapter — key/value and structured persistence.",
+  "kind": "storage",
+  "capabilities": ["kv", "query", "transaction"],
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Path to the SQLite database file" }
+    },
+    "required": ["path"]
+  },
+  "entrypoint": "pheno-plugin-sqlite"
+}

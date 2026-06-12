@@ -20,6 +20,21 @@ in tests, PRs, and architectural documentation.
 
 ---
 
+### FR-PHENOPLUGINS-007
+
+**Description:** Versioned plugin manifest schema + maintained catalog providing the
+interop contract between the PhenoPlugins plugin model and an external agent runtime
+(Agentora `agentkit` `Skill`/`Tool`). A manifest declares name, version, description,
+kind, capabilities, JSON-Schema parameters, and entrypoint; the catalog indexes
+published manifests and is validated in CI. See `docs/PLUGIN_MANIFEST_SPEC.md`.
+
+**Status:** IMPLEMENTED
+
+**Test Traces:** `crates/pheno-plugin-core/src/manifest.rs` (unit tests),
+`crates/pheno-plugin-core/tests/catalog_test.rs` (catalog round-trip)
+
+---
+
 ## Traceability
 
 All tests MUST reference at least one FR using this marker:
