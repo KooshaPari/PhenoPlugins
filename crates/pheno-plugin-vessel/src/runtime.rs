@@ -471,4 +471,361 @@ mod tests {
         assert_eq!(config.image, "nginx:latest");
         assert_eq!(config.name, Some("test".to_string()));
     }
+
+    #[test]
+    fn test_port_mapping_creation() {
+        let mapping = PortMapping { host_port: 8080, container_port: 80, protocol: Protocol::Tcp };
+
+        assert_eq!(mapping.host_port, 8080);
+        assert_eq!(mapping.container_port, 80);
+        assert!(matches!(mapping.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_port_mapping_udp_protocol() {
+        let mapping = PortMapping { host_port: 53, container_port: 53, protocol: Protocol::Udp };
+
+        assert_eq!(mapping.host_port, 53);
+        assert_eq!(mapping.container_port, 53);
+        assert!(matches!(mapping.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_creation() {
+        let ro = VolumeMapping {
+            host_path: "/host".to_string(),
+            container_path: "/container".to_string(),
+            read_only: true,
+        };
+        assert_eq!(ro.host_path, "/host");
+        assert_eq!(ro.container_path, "/container");
+        assert!(ro.read_only);
+
+        let rw = VolumeMapping {
+            host_path: "/data".to_string(),
+            container_path: "/app/data".to_string(),
+            read_only: false,
+        };
+        assert_eq!(rw.host_path, "/data");
+        assert_eq!(rw.container_path, "/app/data");
+        assert!(!rw.read_only);
+    }
+
+    #[test]
+    fn test_protocol_debug_and_copy() {
+        let tcp = Protocol::Tcp;
+        assert_eq!(format!("{:?}", tcp), "Tcp");
+        let udp = Protocol::Udp;
+        assert_eq!(format!("{:?}", udp), "Udp");
+
+        let moved = tcp;
+        assert!(matches!(tcp, Protocol::Tcp));
+        assert!(matches!(moved, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_docker_runtime_default_trait() {
+        let runtime: DockerRuntime = Default::default();
+        assert_eq!(runtime.name(), "docker");
+    }
+
+    #[test]
+    fn test_container_info_construction() {
+        let info = ContainerInfo {
+            id: "abc123".to_string(),
+            name: "web".to_string(),
+            image: "nginx:latest".to_string(),
+            status: "running".to_string(),
+            created: "2024-01-01".to_string(),
+        };
+        assert_eq!(info.id, "abc123");
+        assert_eq!(info.name, "web");
+        assert_eq!(info.image, "nginx:latest");
+        assert_eq!(info.status, "running");
+        assert_eq!(info.created, "2024-01-01");
+    }
+
+    #[test]
+    fn test_container_info_clone() {
+        let info = ContainerInfo {
+            id: "id1".to_string(),
+            name: "n1".to_string(),
+            image: "img1".to_string(),
+            status: "up".to_string(),
+            created: "c1".to_string(),
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.id, info.id);
+        assert_eq!(cloned.name, info.name);
+        assert_eq!(cloned.image, info.image);
+        assert_eq!(cloned.status, info.status);
+        assert_eq!(cloned.created, info.created);
+    }
+
+    #[test]
+    fn test_container_create_config_with_all_fields() {
+        let mut env = HashMap::new();
+        env.insert("A".to_string(), "1".to_string());
+        env.insert("B".to_string(), "2".to_string());
+
+        let config = ContainerCreateConfig {
+            image: "redis:7".to_string(),
+            name: Some("cache".to_string()),
+            env,
+            ports: vec![PortMapping {
+                host_port: 6379,
+                container_port: 6379,
+                protocol: Protocol::Tcp,
+            }],
+            volumes: vec![VolumeMapping {
+                host_path: "/h".to_string(),
+                container_path: "/c".to_string(),
+                read_only: false,
+            }],
+        };
+
+        assert_eq!(config.image, "redis:7");
+        assert_eq!(config.name, Some("cache".to_string()));
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("A"), Some(&"1".to_string()));
+        assert_eq!(config.env.get("B"), Some(&"2".to_string()));
+        assert_eq!(config.ports.len(), 1);
+        assert_eq!(config.ports[0].host_port, 6379);
+        assert_eq!(config.ports[0].container_port, 6379);
+        assert!(matches!(config.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.volumes.len(), 1);
+        assert_eq!(config.volumes[0].host_path, "/h");
+        assert_eq!(config.volumes[0].container_path, "/c");
+        assert!(!config.volumes[0].read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_default_values() {
+        let config = ContainerCreateConfig {
+            image: "x".to_string(),
+            name: None,
+            env: HashMap::new(),
+            ports: vec![],
+            volumes: vec![],
+        };
+        assert!(config.env.is_empty());
+        assert!(config.ports.is_empty());
+        assert!(config.volumes.is_empty());
+        assert!(config.name.is_none());
+    }
+
+    #[test]
+    fn test_podman_runtime_default_trait() {
+        let p: PodmanRuntime = Default::default();
+        assert_eq!(p.name(), "podman");
+    }
+
+    #[test]
+    fn test_podman_runtime_clone() {
+        let p1 = PodmanRuntime::new();
+        let p2 = p1.clone();
+        assert_eq!(p1.name(), p2.name());
+    }
+
+    #[test]
+    fn test_protocol_inequality() {
+        assert_ne!(format!("{:?}", Protocol::Tcp), format!("{:?}", Protocol::Udp));
+    }
+
+    #[test]
+    fn test_docker_runtime_clone() {
+        let d1 = DockerRuntime::new();
+        let d2 = d1.clone();
+        assert_eq!(d1.name(), d2.name());
+    }
+
+    #[test]
+    fn test_docker_runtime_debug() {
+        assert_eq!(format!("{:?}", DockerRuntime::new()), "DockerRuntime");
+    }
+
+    #[test]
+    fn test_podman_runtime_debug() {
+        assert_eq!(format!("{:?}", PodmanRuntime::new()), "PodmanRuntime");
+    }
+
+    #[test]
+    fn test_container_info_debug() {
+        let info = ContainerInfo {
+            id: "x".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: "s".to_string(),
+            created: "c".to_string(),
+        };
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("ContainerInfo"));
+        assert!(dbg.contains("x"));
+    }
+
+    #[test]
+    fn test_port_mapping_clone() {
+        let p = PortMapping {
+            host_port: 80,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        let p2 = p.clone();
+        assert_eq!(p.host_port, p2.host_port);
+        assert_eq!(p.container_port, p2.container_port);
+        assert!(matches!(p2.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_volume_mapping_clone() {
+        let v = VolumeMapping {
+            host_path: "/h".to_string(),
+            container_path: "/c".to_string(),
+            read_only: true,
+        };
+        let v2 = v.clone();
+        assert_eq!(v.host_path, v2.host_path);
+        assert_eq!(v.container_path, v2.container_path);
+        assert!(v2.read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_clone() {
+        let mut env = HashMap::new();
+        env.insert("K".to_string(), "V".to_string());
+
+        let config = ContainerCreateConfig {
+            image: "alpine:latest".to_string(),
+            name: Some("cloned".to_string()),
+            env,
+            ports: vec![PortMapping {
+                host_port: 443,
+                container_port: 443,
+                protocol: Protocol::Tcp,
+            }],
+            volumes: vec![VolumeMapping {
+                host_path: "/host".to_string(),
+                container_path: "/container".to_string(),
+                read_only: false,
+            }],
+        };
+
+        let cloned = config.clone();
+        assert_eq!(config.image, cloned.image);
+        assert_eq!(config.name, cloned.name);
+        assert_eq!(config.env.get("K"), cloned.env.get("K"));
+        assert_eq!(config.ports.len(), cloned.ports.len());
+        assert_eq!(config.ports[0].host_port, cloned.ports[0].host_port);
+        assert_eq!(config.ports[0].container_port, cloned.ports[0].container_port);
+        assert!(matches!(cloned.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.volumes.len(), cloned.volumes.len());
+        assert_eq!(config.volumes[0].host_path, cloned.volumes[0].host_path);
+        assert_eq!(config.volumes[0].container_path, cloned.volumes[0].container_path);
+        assert_eq!(config.volumes[0].read_only, cloned.volumes[0].read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_with_multiple_ports() {
+        let config = ContainerCreateConfig {
+            image: "nginx:latest".to_string(),
+            name: Some("multi-port".to_string()),
+            env: HashMap::new(),
+            ports: vec![
+                PortMapping {
+                    host_port: 8080,
+                    container_port: 80,
+                    protocol: Protocol::Tcp,
+                },
+                PortMapping {
+                    host_port: 8443,
+                    container_port: 443,
+                    protocol: Protocol::Tcp,
+                },
+                PortMapping {
+                    host_port: 53,
+                    container_port: 53,
+                    protocol: Protocol::Udp,
+                },
+            ],
+            volumes: vec![],
+        };
+
+        assert_eq!(config.ports.len(), 3);
+        assert_eq!(config.ports[0].host_port, 8080);
+        assert_eq!(config.ports[0].container_port, 80);
+        assert!(matches!(config.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.ports[1].host_port, 8443);
+        assert_eq!(config.ports[1].container_port, 443);
+        assert!(matches!(config.ports[1].protocol, Protocol::Tcp));
+        assert_eq!(config.ports[2].host_port, 53);
+        assert_eq!(config.ports[2].container_port, 53);
+        assert!(matches!(config.ports[2].protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_container_create_config_with_multiple_volumes() {
+        let config = ContainerCreateConfig {
+            image: "postgres:15".to_string(),
+            name: Some("db".to_string()),
+            env: HashMap::new(),
+            ports: vec![],
+            volumes: vec![
+                VolumeMapping {
+                    host_path: "/data".to_string(),
+                    container_path: "/var/lib/postgresql/data".to_string(),
+                    read_only: false,
+                },
+                VolumeMapping {
+                    host_path: "/etc/config".to_string(),
+                    container_path: "/etc/app".to_string(),
+                    read_only: true,
+                },
+            ],
+        };
+
+        assert_eq!(config.volumes.len(), 2);
+        assert_eq!(config.volumes[0].host_path, "/data");
+        assert_eq!(config.volumes[0].container_path, "/var/lib/postgresql/data");
+        assert!(!config.volumes[0].read_only);
+        assert_eq!(config.volumes[1].host_path, "/etc/config");
+        assert_eq!(config.volumes[1].container_path, "/etc/app");
+        assert!(config.volumes[1].read_only);
+    }
+
+    #[test]
+    fn test_protocol_two_vars_remain_equal() {
+        let a = Protocol::Tcp;
+        let b = a;
+        assert!(matches!(a, Protocol::Tcp));
+        assert!(matches!(b, Protocol::Tcp));
+
+        let c = Protocol::Udp;
+        let d = c;
+        assert!(matches!(c, Protocol::Udp));
+        assert!(matches!(d, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_port_mapping_docker_port_range() {
+        let mapping = PortMapping {
+            host_port: 0,
+            container_port: 65535,
+            protocol: Protocol::Udp,
+        };
+        assert_eq!(mapping.host_port, 0);
+        assert_eq!(mapping.container_port, 65535);
+        assert!(matches!(mapping.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_with_empty_paths() {
+        let v = VolumeMapping {
+            host_path: "".to_string(),
+            container_path: "".to_string(),
+            read_only: false,
+        };
+        assert_eq!(v.host_path, "");
+        assert_eq!(v.container_path, "");
+        assert!(!v.read_only);
+    }
 }

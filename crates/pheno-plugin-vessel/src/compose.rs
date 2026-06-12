@@ -172,4 +172,542 @@ services:
 
         assert!(db_idx.is_some() && web_idx.is_some());
     }
+
+    #[test]
+    fn test_compose_from_yaml_invalid() {
+        let result = ComposeFile::from_yaml(":invalid: yaml: :::");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compose_to_yaml_roundtrip() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let mut db = ComposeService::default();
+        db.image = Some("postgres:15".to_string());
+        services.insert("db".to_string(), db);
+
+        let compose = ComposeFile {
+            version: Some("3.8".to_string()),
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let yaml = compose.to_yaml().unwrap();
+        let parsed = ComposeFile::from_yaml(&yaml).unwrap();
+
+        assert_eq!(parsed.services.len(), compose.services.len());
+        assert_eq!(parsed.version, compose.version);
+        assert_eq!(parsed.services["web"].image, compose.services["web"].image);
+        assert_eq!(parsed.services["db"].image, compose.services["db"].image);
+    }
+
+    #[test]
+    fn test_compose_service_names() {
+        use std::collections::HashSet;
+
+        let mut services = HashMap::new();
+        services.insert("db".to_string(), ComposeService::default());
+        services.insert("api".to_string(), ComposeService::default());
+        services.insert("web".to_string(), ComposeService::default());
+
+        let compose = ComposeFile { version: None, services, networks: None, volumes: None };
+
+        let names: HashSet<&str> = compose.service_names().iter().map(|s| s.as_str()).collect();
+        assert_eq!(names.len(), 3);
+        assert!(names.contains("db"));
+        assert!(names.contains("api"));
+        assert!(names.contains("web"));
+    }
+
+    #[test]
+    fn test_compose_service_default() {
+        let service = ComposeService::default();
+        assert!(service.image.is_none());
+        assert!(service.command.is_none());
+        assert!(service.depends_on.is_none());
+        assert!(service.environment.is_none());
+        assert!(service.ports.is_none());
+        assert!(service.volumes.is_none());
+    }
+
+    #[test]
+    fn test_ordered_services_empty() {
+        let compose =
+            ComposeFile { version: None, services: HashMap::new(), networks: None, volumes: None };
+
+        let ordered = compose.ordered_services();
+        assert!(ordered.is_empty());
+    }
+
+    #[test]
+    fn test_compose_service_field_access() {
+        let mut env = HashMap::new();
+        env.insert("POSTGRES_DB".to_string(), "test".to_string());
+
+        let service = ComposeService {
+            image: Some("postgres:15".to_string()),
+            build: None,
+            container_name: None,
+            environment: Some(env),
+            ports: Some(vec!["5432:5432".to_string()]),
+            volumes: None,
+            depends_on: None,
+            restart: None,
+            command: None,
+            working_dir: None,
+        };
+
+        assert_eq!(service.image.as_ref().unwrap(), "postgres:15");
+        assert_eq!(service.environment.as_ref().unwrap().get("POSTGRES_DB").unwrap(), "test");
+        assert_eq!(service.ports.as_ref().unwrap(), &vec!["5432:5432".to_string()]);
+    }
+
+    #[test]
+    fn test_compose_dependencies_count() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.depends_on = Some(vec!["db".to_string(), "api".to_string()]);
+        services.insert("web".to_string(), web);
+
+        services.insert("db".to_string(), ComposeService::default());
+        services.insert("api".to_string(), ComposeService::default());
+
+        let compose = ComposeFile { version: None, services, networks: None, volumes: None };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(compose.services["web"].depends_on.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_build_config_construction() {
+        let mut args = HashMap::new();
+        args.insert("VERSION".to_string(), "1.0".to_string());
+
+        let build = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: Some(args),
+        };
+
+        assert_eq!(build.context.as_deref(), Some("."));
+        assert_eq!(build.dockerfile.as_deref(), Some("Dockerfile"));
+
+        let args_ref = build.args.as_ref().unwrap();
+        assert_eq!(args_ref.len(), 1);
+        assert_eq!(args_ref.get("VERSION").map(|s| s.as_str()), Some("1.0"));
+    }
+
+    #[test]
+    fn test_build_config_serde() {
+        let mut args = HashMap::new();
+        args.insert("VERSION".to_string(), "1.0".to_string());
+
+        let original = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: Some(args),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: BuildConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.context, original.context);
+        assert_eq!(parsed.dockerfile, original.dockerfile);
+        assert_eq!(parsed.args, original.args);
+    }
+
+    #[test]
+    fn test_network_config_construction() {
+        let net = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+
+        assert_eq!(net.driver.as_deref(), Some("bridge"));
+        assert_eq!(net.external, Some(false));
+    }
+
+    #[test]
+    fn test_network_config_serde() {
+        let original = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: NetworkConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.driver, original.driver);
+        assert_eq!(parsed.external, original.external);
+    }
+
+    #[test]
+    fn test_volume_config_construction() {
+        let vol = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+
+        assert_eq!(vol.driver.as_deref(), Some("local"));
+        assert_eq!(vol.external, Some(true));
+    }
+
+    #[test]
+    fn test_volume_config_serde() {
+        let original = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: VolumeConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.driver, original.driver);
+        assert_eq!(parsed.external, original.external);
+    }
+
+    #[test]
+    fn test_ordered_services_with_missing_dependency() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx".to_string());
+        web.depends_on = Some(vec!["nonexistent".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].image.as_deref(), Some("nginx"));
+        assert_eq!(
+            ordered[0].depends_on.as_deref(),
+            Some(&vec!["nonexistent".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn test_ordered_services_three_level_chain() {
+        let mut services = HashMap::new();
+
+        let mut cache = ComposeService::default();
+        cache.container_name = Some("cache".to_string());
+        services.insert("cache".to_string(), cache);
+
+        let mut db = ComposeService::default();
+        db.container_name = Some("db".to_string());
+        db.depends_on = Some(vec!["cache".to_string()]);
+        services.insert("db".to_string(), db);
+
+        let mut web = ComposeService::default();
+        web.container_name = Some("web".to_string());
+        web.depends_on = Some(vec!["db".to_string()]);
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 3);
+
+        let names: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.container_name.as_deref().unwrap())
+            .collect();
+        let cache_idx = names.iter().position(|n| *n == "cache").unwrap();
+        let db_idx = names.iter().position(|n| *n == "db").unwrap();
+        let web_idx = names.iter().position(|n| *n == "web").unwrap();
+
+        assert!(cache_idx < db_idx, "cache should come before db");
+        assert!(db_idx < web_idx, "db should come before web");
+    }
+
+    #[test]
+    fn test_compose_with_networks_and_volumes() {
+        let mut networks = HashMap::new();
+        networks.insert(
+            "net1".to_string(),
+            NetworkConfig {
+                driver: Some("bridge".to_string()),
+                external: Some(false),
+            },
+        );
+
+        let mut volumes = HashMap::new();
+        volumes.insert(
+            "vol1".to_string(),
+            VolumeConfig {
+                driver: Some("local".to_string()),
+                external: Some(true),
+            },
+        );
+
+        let compose = ComposeFile {
+            version: Some("3.8".to_string()),
+            services: HashMap::new(),
+            networks: Some(networks),
+            volumes: Some(volumes),
+        };
+
+        assert!(compose.networks.is_some());
+        assert_eq!(compose.networks.as_ref().unwrap().len(), 1);
+        assert!(compose.networks.as_ref().unwrap().contains_key("net1"));
+
+        assert!(compose.volumes.is_some());
+        assert_eq!(compose.volumes.as_ref().unwrap().len(), 1);
+        assert!(compose.volumes.as_ref().unwrap().contains_key("vol1"));
+    }
+
+    #[test]
+    fn test_compose_service_build_field() {
+        let service = ComposeService {
+            image: None,
+            build: Some(BuildConfig {
+                context: Some("./app".to_string()),
+                dockerfile: None,
+                args: None,
+            }),
+            container_name: None,
+            environment: None,
+            ports: None,
+            volumes: None,
+            depends_on: None,
+            restart: None,
+            command: None,
+            working_dir: None,
+        };
+
+        assert_eq!(
+            service.build.as_ref().unwrap().context.as_deref(),
+            Some("./app")
+        );
+        assert!(service.build.as_ref().unwrap().dockerfile.is_none());
+        assert!(service.build.as_ref().unwrap().args.is_none());
+    }
+
+    #[test]
+    fn test_compose_default() {
+        // ComposeFile does not derive Default, so construct the equivalent
+        // "empty" value explicitly: empty services map and None for the
+        // optional fields — exactly what Default::default() would yield.
+        let c = ComposeFile {
+            version: None,
+            services: HashMap::new(),
+            networks: None,
+            volumes: None,
+        };
+        assert!(c.services.is_empty());
+        assert!(c.networks.is_none());
+        assert!(c.volumes.is_none());
+        assert!(c.version.is_none());
+    }
+
+    #[test]
+    fn test_compose_services_accessor() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let mut db = ComposeService::default();
+        db.image = Some("postgres:15".to_string());
+        services.insert("db".to_string(), db);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let services_ref: &HashMap<String, ComposeService> = &compose.services;
+        assert_eq!(services_ref.len(), 2);
+        assert!(services_ref.contains_key("web"));
+        assert!(services_ref.contains_key("db"));
+        assert_eq!(
+            services_ref.get("web").unwrap().image.as_deref(),
+            Some("nginx:latest")
+        );
+        assert_eq!(
+            services_ref.get("db").unwrap().image.as_deref(),
+            Some("postgres:15")
+        );
+    }
+
+    #[test]
+    fn test_compose_debug_format() {
+        let mut services = HashMap::new();
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let debug = format!("{:?}", compose);
+        assert!(debug.contains("ComposeFile"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("services"), "debug should contain field name: {}", debug);
+        assert!(debug.contains("web"), "debug should contain service name: {}", debug);
+    }
+
+    #[test]
+    fn test_build_config_default() {
+        // BuildConfig does not derive Default, so construct the equivalent
+        // all-None value explicitly.
+        let b = BuildConfig { context: None, dockerfile: None, args: None };
+        assert!(b.context.is_none());
+        assert!(b.dockerfile.is_none());
+        assert!(b.args.is_none());
+    }
+
+    #[test]
+    fn test_network_config_default() {
+        let n = NetworkConfig { driver: None, external: None };
+        assert!(n.driver.is_none());
+        assert!(n.external.is_none());
+    }
+
+    #[test]
+    fn test_volume_config_default() {
+        let v = VolumeConfig { driver: None, external: None };
+        assert!(v.driver.is_none());
+        assert!(v.external.is_none());
+    }
+
+    #[test]
+    fn test_build_config_debug() {
+        let b = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: None,
+        };
+        let debug = format!("{:?}", b);
+        assert!(debug.contains("BuildConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("Dockerfile"), "debug should contain dockerfile value: {}", debug);
+        assert!(debug.contains("."), "debug should contain context value: {}", debug);
+    }
+
+    #[test]
+    fn test_network_config_debug() {
+        let n = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+        let debug = format!("{:?}", n);
+        assert!(debug.contains("NetworkConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("bridge"), "debug should contain driver value: {}", debug);
+    }
+
+    #[test]
+    fn test_volume_config_debug() {
+        let v = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+        let debug = format!("{:?}", v);
+        assert!(debug.contains("VolumeConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("local"), "debug should contain driver value: {}", debug);
+    }
+
+    #[test]
+    fn test_ordered_services_with_circular_dep() {
+        // A depends on B, and B depends on A. The implementation guards
+        // against infinite recursion via a `visited` set, so both services
+        // should still appear in the result (in some order, without panicking).
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        a.depends_on = Some(vec!["b".to_string()]);
+        services.insert("a".to_string(), a);
+
+        let mut b = ComposeService::default();
+        b.image = Some("b".to_string());
+        b.depends_on = Some(vec!["a".to_string()]);
+        services.insert("b".to_string(), b);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 2);
+        let images: Vec<&str> =
+            ordered.iter().map(|s| s.image.as_deref().unwrap()).collect();
+        assert!(images.contains(&"a"));
+        assert!(images.contains(&"b"));
+    }
+
+    #[test]
+    fn test_ordered_services_with_self_referential() {
+        // A depends on itself. The `visited` set should prevent infinite
+        // recursion, so A appears exactly once in the result.
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        a.depends_on = Some(vec!["a".to_string()]);
+        services.insert("a".to_string(), a);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].image.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn test_compose_to_yaml_does_not_panic_with_special_chars() {
+        let mut services = HashMap::new();
+        let mut svc = ComposeService::default();
+        svc.image = Some("nginx:latest".to_string());
+        services.insert("service-with-dashes_and_underscores".to_string(), svc);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        // Round-trip should not panic and should preserve the name verbatim.
+        let yaml = compose.to_yaml().unwrap();
+        let parsed = ComposeFile::from_yaml(&yaml).unwrap();
+
+        assert!(parsed.services.contains_key("service-with-dashes_and_underscores"));
+        assert_eq!(
+            parsed.services["service-with-dashes_and_underscores"].image.as_deref(),
+            Some("nginx:latest")
+        );
+    }
 }

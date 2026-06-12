@@ -55,8 +55,9 @@ impl SqliteStoragePlugin {
     // kept: public constructor used by downstream crates' test suites
     #[allow(dead_code)]
     pub fn in_memory() -> PluginResult<Self> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| PluginError::Initialization(format!("failed to open in-memory db: {}", e)))?;
+        let conn = Connection::open_in_memory().map_err(|e| {
+            PluginError::Initialization(format!("failed to open in-memory db: {}", e))
+        })?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| PluginError::Initialization(format!("pragma failed: {}", e)))?;
@@ -419,11 +420,13 @@ mod tests {
     #[test]
     fn test_new_and_init() {
         let plugin = create_test_plugin();
-        plugin.initialize(pheno_plugin_core::traits::PluginConfig {
-            name: "test".to_string(),
-            version: "0.1.0".to_string(),
-            adapter_config: serde_json::json!({}),
-        }).expect("init failed");
+        plugin
+            .initialize(pheno_plugin_core::traits::PluginConfig {
+                name: "test".to_string(),
+                version: "0.1.0".to_string(),
+                adapter_config: serde_json::json!({}),
+            })
+            .expect("init failed");
     }
 
     #[test]
@@ -522,6 +525,572 @@ mod tests {
             let trail = plugin.get_audit_trail(feature_id).await.unwrap();
             assert_eq!(trail.len(), 1);
             assert_eq!(trail[0]["entry_type"], "created");
+        });
+    }
+
+    #[test]
+    fn test_db_path_accessor() {
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.db_path(), Path::new(":memory:"));
+    }
+
+    #[test]
+    fn test_connection_accessor() {
+        let plugin = create_test_plugin();
+        let conn = plugin.connection();
+        let conn_guard = conn.lock().expect("lock poisoned");
+        let result: i64 = conn_guard
+            .query_row("SELECT 1", [], |r| r.get(0))
+            .expect("query");
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_adapter_identity() {
+        let plugin = create_test_plugin();
+        assert_eq!(plugin.name(), "sqlite-storage");
+        assert!(!plugin.version().is_empty());
+        assert_eq!(plugin.version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let plugin = create_test_plugin();
+        let debug_str = format!("{:?}", plugin);
+        assert!(debug_str.contains("SqliteStoragePlugin"));
+        assert!(debug_str.contains(":memory:"));
+    }
+
+    #[test]
+    fn test_validation_missing_slug() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Missing "slug" field should yield a Validation error.
+            let feature = serde_json::json!({
+                "name": "Test Feature Without Slug"
+            });
+
+            let err = plugin
+                .create_feature(&feature)
+                .await
+                .expect_err("expected Validation error for missing slug");
+            assert!(
+                matches!(err, PluginError::Validation(ref msg) if msg == "missing slug"),
+                "unexpected error: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_validation_missing_feature_id() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Missing "feature_id" field should yield a Validation error.
+            let wp = serde_json::json!({
+                "title": "Work Package Without Feature"
+            });
+
+            let err = plugin
+                .create_work_package(&wp)
+                .await
+                .expect_err("expected Validation error for missing feature_id");
+            assert!(
+                matches!(err, PluginError::Validation(ref msg) if msg == "missing feature_id"),
+                "unexpected error: {:?}",
+                err
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_missing_feature_returns_none() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // No features have been created; both lookups should return Ok(None).
+            let by_slug = plugin
+                .get_feature_by_slug("nonexistent")
+                .await
+                .expect("get_feature_by_slug should not error on missing row");
+            assert!(by_slug.is_none(), "expected None for unknown slug");
+
+            let by_id = plugin
+                .get_feature_by_id(9999)
+                .await
+                .expect("get_feature_by_id should not error on missing row");
+            assert!(by_id.is_none(), "expected None for unknown id");
+        });
+    }
+
+    #[test]
+    fn test_get_audit_trail_empty() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Create a feature but no audit entries.
+            let feature = serde_json::json!({
+                "slug": "no-audit",
+                "name": "No Audit Feature"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            // Audit trail for a feature with no entries should be an empty vec.
+            let trail = plugin
+                .get_audit_trail(feature_id)
+                .await
+                .expect("get_audit_trail should not error on empty result");
+            assert!(
+                trail.is_empty(),
+                "expected empty audit trail, got {} entries",
+                trail.len()
+            );
+        });
+    }
+
+    #[test]
+    fn test_new_with_file() {
+        // Build a unique path under the system temp dir.
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("pheno-plugin-sqlite-test-{}-{}.db", pid, nanos));
+
+        // Construct from a real file path (NOT in_memory).
+        let plugin = SqliteStoragePlugin::new(&path)
+            .expect("SqliteStoragePlugin::new(file path) should succeed");
+
+        // The plugin owns and preserves the requested path.
+        assert_eq!(plugin.db_path(), path.as_path());
+
+        // initialize() must succeed against the freshly migrated file-backed DB.
+        plugin
+            .initialize(pheno_plugin_core::traits::PluginConfig {
+                name: "test".to_string(),
+                version: "0.1.0".to_string(),
+                adapter_config: serde_json::json!({}),
+            })
+            .expect("initialize should succeed against file-backed plugin");
+
+        // Drop the plugin (closes the underlying Connection) before removing
+        // the file, then clean up the temp db on disk.
+        drop(plugin);
+        std::fs::remove_file(&path).expect("failed to remove temp sqlite file");
+    }
+
+    #[test]
+    fn test_state_update_transitions() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // -- Feature state transitions: draft -> active -> complete --
+            let feature = serde_json::json!({
+                "slug": "transition-feature",
+                "name": "Transition Feature"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+            assert!(feature_id > 0);
+
+            // No `state` provided on create -> defaults to "draft".
+            let created = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(created.is_some());
+            assert_eq!(created.unwrap()["state"], "draft");
+
+            // First update: draft -> active (overwrites default).
+            plugin
+                .update_feature_state(feature_id, "active")
+                .await
+                .unwrap();
+            let after_active = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(after_active.is_some());
+            assert_eq!(after_active.unwrap()["state"], "active");
+
+            // Second update: active -> complete (verifies the prior state is overwritten).
+            plugin
+                .update_feature_state(feature_id, "complete")
+                .await
+                .unwrap();
+            let after_complete = plugin.get_feature_by_id(feature_id).await.unwrap();
+            assert!(after_complete.is_some());
+            assert_eq!(after_complete.unwrap()["state"], "complete");
+
+            // -- Work package state transitions: backlog -> in_progress -> done --
+            let wp = serde_json::json!({
+                "feature_id": feature_id,
+                "title": "Transition Work Package"
+            });
+            let wp_id = plugin.create_work_package(&wp).await.unwrap();
+            assert!(wp_id > 0);
+
+            // No `state` provided on create -> defaults to "backlog".
+            let wp_created = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(wp_created.is_some());
+            assert_eq!(wp_created.unwrap()["state"], "backlog");
+
+            // First update: backlog -> in_progress (overwrites default).
+            plugin.update_wp_state(wp_id, "in_progress").await.unwrap();
+            let after_in_progress = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(after_in_progress.is_some());
+            assert_eq!(after_in_progress.unwrap()["state"], "in_progress");
+
+            // Second update: in_progress -> done (verifies the prior state is overwritten).
+            plugin.update_wp_state(wp_id, "done").await.unwrap();
+            let after_done = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(after_done.is_some());
+            assert_eq!(after_done.unwrap()["state"], "done");
+        });
+    }
+
+    #[test]
+    fn test_list_all_features_multiple() {
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Create three features with distinct, sortable slugs.
+            let slugs = ["alpha-feature", "beta-feature", "gamma-feature"];
+            for slug in slugs.iter() {
+                let feature = serde_json::json!({
+                    "slug": slug,
+                    "name": format!("Feature {}", slug)
+                });
+                let id = plugin.create_feature(&feature).await.unwrap();
+                assert!(id > 0);
+            }
+
+            // list_all_features() should return all three.
+            let mut all = plugin.list_all_features().await.unwrap();
+            assert_eq!(all.len(), 3);
+
+            // list_all_features() orders by created_at DESC, so sort by slug
+            // for a stable, order-independent comparison.
+            all.sort_by(|a, b| a["slug"].as_str().cmp(&b["slug"].as_str()));
+
+            let returned: Vec<&str> = all
+                .iter()
+                .map(|f| f["slug"].as_str().expect("slug should be a string"))
+                .collect();
+            assert_eq!(returned, slugs.to_vec());
+
+            // Spot-check that other fields round-tripped through list_all_features.
+            assert_eq!(all[0]["name"], "Feature alpha-feature");
+            assert_eq!(all[1]["name"], "Feature beta-feature");
+            assert_eq!(all[2]["name"], "Feature gamma-feature");
+        });
+    }
+
+    #[test]
+    fn test_in_memory_constructor() {
+        // Direct in_memory() call: db_path should be ":memory:" and the
+        // adapter name should be the canonical "sqlite-storage" identifier.
+        let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+        assert_eq!(plugin.db_path(), Path::new(":memory:"));
+        assert_eq!(plugin.name(), "sqlite-storage");
+    }
+
+    #[test]
+    fn test_audit_entry_default_actor_and_type() {
+        // When `entry_type` and `actor` are omitted from the JSON, the
+        // production code at lib.rs:355 and lib.rs:359 falls back to
+        // "info" and "system" respectively.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-defaults",
+                "name": "Audit Defaults"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            // No `entry_type`, no `actor` — only feature_id and details.
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "details": "raw details"
+            });
+            plugin.append_audit_entry(&entry).await.unwrap();
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+            assert_eq!(trail[0]["entry_type"], "info");
+            assert_eq!(trail[0]["actor"], "system");
+        });
+    }
+
+    #[test]
+    fn test_multiple_audit_entries_ordering() {
+        // Append three audit entries with distinct actors; verify all
+        // three are returned and their actors / details are preserved.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-ordering",
+                "name": "Audit Ordering"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let actors = ["alice", "bob", "carol"];
+            for actor in actors.iter() {
+                let entry = serde_json::json!({
+                    "feature_id": feature_id,
+                    "entry_type": "noted",
+                    "actor": actor,
+                    "details": format!("entry-by-{}", actor)
+                });
+                plugin.append_audit_entry(&entry).await.unwrap();
+            }
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 3);
+
+            // The trail is ordered by created_at DESC, so the
+            // last-inserted entry ("carol") is first. Spot-check that
+            // the full set of actors and details is preserved across
+            // the trail (order-independent).
+            let returned_actors: Vec<&str> = trail
+                .iter()
+                .map(|e| e["actor"].as_str().expect("actor should be a string"))
+                .collect();
+            let mut returned_actors_sorted = returned_actors.clone();
+            returned_actors_sorted.sort();
+            assert_eq!(returned_actors_sorted, actors.to_vec());
+
+            // Spot-check the first entry's details preserved verbatim.
+            // NOTE: the production code at lib.rs:360 stores `details` as
+            // `entry.get("details").map(|v| v.to_string())`, which is the
+            // *JSON-serialized* form of the value (i.e. wrapped in quotes
+            // for a JSON string). The round-trip reads back the same JSON
+            // string, so we compare against the JSON-stringified form.
+            for entry in trail.iter() {
+                let actor = entry["actor"].as_str().expect("actor should be a string");
+                let details = entry["details"].as_str().expect("details should be a string");
+                let expected = serde_json::json!(format!("entry-by-{}", actor)).to_string();
+                assert_eq!(details, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn test_audit_entry_with_no_details() {
+        // When `details` is omitted, the production code at lib.rs:360
+        // maps it to None (stored as SQL NULL). The query result maps
+        // the NULL back to serde_json::Value::Null, so the JSON
+        // representation should be `null`.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-no-details",
+                "name": "Audit No Details"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "actor": "quiet"
+            });
+            let id = plugin.append_audit_entry(&entry).await.unwrap();
+            assert!(id > 0);
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+            assert!(
+                trail[0]["details"].is_null(),
+                "expected details to be JSON null when omitted, got {:?}",
+                trail[0]["details"]
+            );
+            assert_eq!(trail[0]["actor"], "quiet");
+        });
+    }
+
+    #[test]
+    fn test_update_feature_state_for_nonexistent_id() {
+        // update_feature_state at lib.rs:239 does not inspect the number
+        // of affected rows — it just executes the UPDATE and returns
+        // Ok(()). This documents the actual "fire and forget" behavior
+        // for an id that does not exist: no error, no row updated.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            plugin
+                .update_feature_state(99999, "active")
+                .await
+                .expect("update_feature_state for nonexistent id should silently succeed");
+
+            // Confirm no row was actually changed by listing features.
+            let all = plugin.list_all_features().await.unwrap();
+            assert!(
+                all.is_empty(),
+                "expected no features after updating a nonexistent id, got {}",
+                all.len()
+            );
+        });
+    }
+
+    #[test]
+    fn test_update_work_package_state_for_nonexistent_id() {
+        // Same fire-and-forget behavior as update_feature_state — see
+        // lib.rs:334. Document it for work packages.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            plugin
+                .update_wp_state(99999, "done")
+                .await
+                .expect("update_wp_state for nonexistent id should silently succeed");
+        });
+    }
+
+    #[test]
+    fn test_create_feature_duplicate_slug() {
+        // The `features.slug` column is declared UNIQUE NOT NULL
+        // (lib.rs:79). Inserting a second feature with the same slug
+        // must fail with an Operation error.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let first = serde_json::json!({
+                "slug": "dup",
+                "name": "First Dup"
+            });
+            let id1 = plugin
+                .create_feature(&first)
+                .await
+                .expect("first insert should succeed");
+            assert!(id1 > 0);
+
+            let second = serde_json::json!({
+                "slug": "dup",
+                "name": "Second Dup"
+            });
+            let result = plugin.create_feature(&second).await;
+            assert!(
+                result.is_err(),
+                "expected an error for duplicate slug, got {:?}",
+                result
+            );
+        });
+    }
+
+    #[test]
+    fn test_create_work_package_with_invalid_feature_id() {
+        // The `work_packages.feature_id` column has a foreign key to
+        // `features.id` (lib.rs:96). Inserting with a feature_id that
+        // does not exist must fail. We also try a negative id (-1) as
+        // an extra defensive case: the FK should reject it too.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            // Case 1: feature_id = 99999 (no such feature row).
+            let wp_orphan = serde_json::json!({
+                "feature_id": 99999,
+                "title": "orphan"
+            });
+            let result_orphan = plugin.create_work_package(&wp_orphan).await;
+            assert!(
+                result_orphan.is_err(),
+                "expected FK error for nonexistent feature_id 99999, got {:?}",
+                result_orphan
+            );
+
+            // Case 2: feature_id = -1. We need a real feature first so
+            // that a *valid* work package would otherwise succeed; the
+            // FK on -1 is the one we expect to fail.
+            let feature = serde_json::json!({
+                "slug": "fk-test",
+                "name": "FK Test"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+            let wp_neg = serde_json::json!({
+                "feature_id": -1,
+                "title": "negative"
+            });
+            let result_neg = plugin.create_work_package(&wp_neg).await;
+            assert!(
+                result_neg.is_err(),
+                "expected FK error for feature_id -1, got {:?}",
+                result_neg
+            );
+
+            // Sanity: a valid work package for the real feature still
+            // succeeds, so the negative case above really is the FK
+            // rejecting -1, not a broken connection.
+            let wp_ok = serde_json::json!({
+                "feature_id": feature_id,
+                "title": "valid"
+            });
+            plugin
+                .create_work_package(&wp_ok)
+                .await
+                .expect("valid work package should succeed");
+        });
+    }
+
+    #[test]
+    fn test_connection_accessor_arc_independence() {
+        // connection() returns Arc::clone(&self.conn); the two Arcs
+        // returned by consecutive calls must point to the *same*
+        // allocation (Arc::ptr_eq) and must share the same data.
+        let plugin = create_test_plugin();
+        let conn_a = plugin.connection();
+        let conn_b = plugin.connection();
+        assert!(
+            Arc::ptr_eq(&conn_a, &conn_b),
+            "connection() should return Arcs that share the same allocation"
+        );
+
+        // A write through one Arc should be visible through the other.
+        {
+            let guard = conn_a.lock().expect("lock poisoned");
+            guard
+                .execute("CREATE TABLE IF NOT EXISTS arc_probe (n INTEGER)", [])
+                .expect("create probe table");
+            guard
+                .execute("INSERT INTO arc_probe (n) VALUES (42)", [])
+                .expect("insert probe");
+        }
+        let observed: i64 = conn_b
+            .lock()
+            .expect("lock poisoned")
+            .query_row("SELECT n FROM arc_probe", [], |r| r.get(0))
+            .expect("select probe");
+        assert_eq!(observed, 42);
+    }
+
+    #[test]
+    fn test_list_all_features_empty() {
+        // On a fresh in-memory plugin with no inserts, list_all_features
+        // must return Ok(vec![]) — an empty list, not an error.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let all = plugin
+                .list_all_features()
+                .await
+                .expect("list_all_features on an empty db should be Ok");
+            assert!(
+                all.is_empty(),
+                "expected an empty feature list, got {} entries",
+                all.len()
+            );
         });
     }
 }
