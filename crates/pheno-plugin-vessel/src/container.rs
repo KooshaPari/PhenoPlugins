@@ -478,4 +478,253 @@ mod tests {
         assert_eq!(cfg.workdir.as_deref(), Some("/tmp"));
         assert_eq!(cfg.image, "alpine:3.20");
     }
+
+    #[test]
+    fn test_container_is_stopped_false_for_created() {
+        // `Created` containers are still in the setup phase; they have never
+        // been started, so they are not "stopped" in the lifecycle sense.
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Created,
+        };
+        assert!(!c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_is_stopped_false_for_restarting() {
+        // `Restarting` is a transitional state; the container is not stopped.
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Restarting,
+        };
+        assert!(!c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_is_stopped_false_for_removing() {
+        // `Removing` is a transitional state; the container is not stopped.
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Removing,
+        };
+        assert!(!c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_is_stopped_true_for_stopped() {
+        // The canonical "stopped" state in this lifecycle model is `Exited`.
+        // (Note: `ContainerStatus` has no `Stopped` variant; the closest
+        // semantic match for the lifecycle term "stopped" is `Exited`.)
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Exited,
+        };
+        assert!(c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_is_stopped_true_for_dead() {
+        // `Dead` containers are stopped (per `is_stopped`'s definition:
+        // `Exited | Dead`).
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Dead,
+        };
+        assert!(c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_is_running_false_for_all_non_running_statuses() {
+        // For every non-Running status, `is_running()` must return false.
+        // (`ContainerStatus` has no `Stopped` variant; the 6 non-Running
+        // variants are: Created, Exited, Paused, Restarting, Removing, Dead.)
+        let mk = |status: ContainerStatus| Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status,
+        };
+
+        let non_running = [
+            ContainerStatus::Created,
+            ContainerStatus::Exited,
+            ContainerStatus::Paused,
+            ContainerStatus::Restarting,
+            ContainerStatus::Removing,
+            ContainerStatus::Dead,
+        ];
+        assert_eq!(non_running.len(), 6);
+
+        for status in non_running {
+            let c = mk(status);
+            assert!(
+                !c.is_running(),
+                "expected {status:?} to not be running, but is_running() returned true"
+            );
+        }
+    }
+
+    #[test]
+    fn test_container_short_id_exactly_12_chars() {
+        // An id of exactly 12 characters is returned verbatim, with no
+        // truncation. This is the boundary case at the 12-char edge.
+        let container = Container {
+            id: "abcdefghijkl".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert_eq!(container.short_id(), "abcdefghijkl");
+        assert_eq!(container.short_id().len(), 12);
+    }
+
+    #[test]
+    fn test_container_short_id_13_chars_truncates() {
+        // An id of 13 characters is truncated to the first 12 characters.
+        let container = Container {
+            id: "abcdefghijklm".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert_eq!(container.short_id(), "abcdefghijkl");
+        assert_eq!(container.short_id().len(), 12);
+    }
+
+    #[test]
+    fn test_container_short_id_100_chars_truncates() {
+        // A 100-character id is truncated to the first 12 characters.
+        let container = Container {
+            id: "a".repeat(100),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        let short = container.short_id();
+        assert_eq!(short.len(), 12);
+        assert_eq!(short, "a".repeat(12));
+    }
+
+    #[test]
+    fn test_container_short_id_idempotent() {
+        // `short_id()` must return the same value across multiple calls on
+        // the same `Container` instance.
+        let container = Container {
+            id: "abcdefghijklmnopqrstuvwxyz".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        let first = container.short_id().to_string();
+        let second = container.short_id().to_string();
+        let third = container.short_id().to_string();
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+        assert_eq!(first, "abcdefghijkl");
+    }
+
+    #[test]
+    fn test_container_config_equality_field_by_field() {
+        // `ContainerConfig` does not derive `PartialEq`, so we compare
+        // field-by-field. Two configs with identical fields must compare
+        // equal field-by-field; mutating a single field must break the
+        // equality for that field.
+        let mut env_a = HashMap::new();
+        env_a.insert("FOO".to_string(), "bar".to_string());
+        let mut env_b = HashMap::new();
+        env_b.insert("FOO".to_string(), "bar".to_string());
+
+        let a = ContainerConfig {
+            image: "nginx:1.25".to_string(),
+            name: Some("web".to_string()),
+            env: env_a,
+            cmd: Some(vec!["nginx".to_string()]),
+            workdir: Some("/app".to_string()),
+        };
+        let mut b = ContainerConfig {
+            image: "nginx:1.25".to_string(),
+            name: Some("web".to_string()),
+            env: env_b,
+            cmd: Some(vec!["nginx".to_string()]),
+            workdir: Some("/app".to_string()),
+        };
+
+        // Field-by-field equality on the original pair.
+        assert_eq!(a.image, b.image);
+        assert_eq!(a.name, b.name);
+        assert_eq!(a.env.len(), b.env.len());
+        assert_eq!(
+            a.env.get("FOO").map(String::as_str),
+            b.env.get("FOO").map(String::as_str)
+        );
+        assert_eq!(a.cmd, b.cmd);
+        assert_eq!(a.workdir, b.workdir);
+
+        // Mutate `image` -> field-by-field equality must break for `image`.
+        b.image = "redis:7".to_string();
+        assert_ne!(a.image, b.image);
+        assert_eq!(a.name, b.name);
+        assert_eq!(a.workdir, b.workdir);
+
+        // Restore `image`; mutate `name` -> equality must break for `name`.
+        b.image = "nginx:1.25".to_string();
+        b.name = Some("cache".to_string());
+        assert_ne!(a.name, b.name);
+        assert_eq!(a.image, b.image);
+
+        // Restore `name`; mutate `env` -> equality must break for `env`.
+        b.name = Some("web".to_string());
+        b.env.insert("EXTRA".to_string(), "value".to_string());
+        assert_ne!(a.env.len(), b.env.len());
+
+        // Restore `env`; mutate `cmd` -> equality must break for `cmd`.
+        b.env.remove("EXTRA");
+        b.cmd = Some(vec!["sh".to_string()]);
+        assert_ne!(a.cmd, b.cmd);
+
+        // Restore `cmd`; mutate `workdir` -> equality must break for `workdir`.
+        b.cmd = Some(vec!["nginx".to_string()]);
+        b.workdir = Some("/var".to_string());
+        assert_ne!(a.workdir, b.workdir);
+    }
+
+    #[test]
+    fn test_container_status_default() {
+        // `ContainerStatus` does not derive `Default`, so `ContainerStatus::default()`
+        // is not available. Instead, build all 7 variants and assert that
+        // they are all pairwise distinct (no two variants compare equal).
+        let all = [
+            ContainerStatus::Created,
+            ContainerStatus::Running,
+            ContainerStatus::Paused,
+            ContainerStatus::Restarting,
+            ContainerStatus::Removing,
+            ContainerStatus::Exited,
+            ContainerStatus::Dead,
+        ];
+        assert_eq!(all.len(), 7);
+
+        for (i, a) in all.iter().enumerate() {
+            for (j, b) in all.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b, "variant at index {i} must equal itself");
+                } else {
+                    assert_ne!(
+                        a, b,
+                        "variants at indices {i} ({a:?}) and {j} ({b:?}) must be distinct"
+                    );
+                }
+            }
+        }
+    }
 }

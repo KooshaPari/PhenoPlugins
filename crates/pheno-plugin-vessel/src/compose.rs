@@ -710,4 +710,361 @@ services:
             Some("nginx:latest")
         );
     }
+
+    #[test]
+    fn test_compose_clone() {
+        // Build a ComposeFile with services, networks, and volumes populated.
+        // Clone it and verify every field is preserved.
+        let mut services = HashMap::new();
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let mut networks = HashMap::new();
+        networks.insert(
+            "net1".to_string(),
+            NetworkConfig {
+                driver: Some("bridge".to_string()),
+                external: Some(false),
+            },
+        );
+
+        let mut volumes = HashMap::new();
+        volumes.insert(
+            "vol1".to_string(),
+            VolumeConfig {
+                driver: Some("local".to_string()),
+                external: Some(true),
+            },
+        );
+
+        let original = ComposeFile {
+            version: Some("3.8".to_string()),
+            services,
+            networks: Some(networks),
+            volumes: Some(volumes),
+        };
+
+        let cloned = original.clone();
+
+        assert_eq!(cloned.version, original.version);
+        assert_eq!(cloned.services.len(), original.services.len());
+        assert_eq!(cloned.services["web"].image, original.services["web"].image);
+
+        assert!(cloned.networks.is_some());
+        assert_eq!(
+            cloned.networks.as_ref().unwrap().len(),
+            original.networks.as_ref().unwrap().len()
+        );
+        assert_eq!(
+            cloned.networks.as_ref().unwrap()["net1"].driver,
+            original.networks.as_ref().unwrap()["net1"].driver
+        );
+        assert_eq!(
+            cloned.networks.as_ref().unwrap()["net1"].external,
+            original.networks.as_ref().unwrap()["net1"].external
+        );
+
+        assert!(cloned.volumes.is_some());
+        assert_eq!(
+            cloned.volumes.as_ref().unwrap().len(),
+            original.volumes.as_ref().unwrap().len()
+        );
+        assert_eq!(
+            cloned.volumes.as_ref().unwrap()["vol1"].driver,
+            original.volumes.as_ref().unwrap()["vol1"].driver
+        );
+        assert_eq!(
+            cloned.volumes.as_ref().unwrap()["vol1"].external,
+            original.volumes.as_ref().unwrap()["vol1"].external
+        );
+    }
+
+    #[test]
+    fn test_service_clone() {
+        // Build a ComposeService with every field populated, clone it, and
+        // verify the clone is an exact copy.
+        let mut env = HashMap::new();
+        env.insert("KEY".to_string(), "value".to_string());
+
+        let service = ComposeService {
+            image: Some("nginx:latest".to_string()),
+            build: Some(BuildConfig {
+                context: Some(".".to_string()),
+                dockerfile: Some("Dockerfile".to_string()),
+                args: Some(env.clone()),
+            }),
+            container_name: Some("mycontainer".to_string()),
+            environment: Some(env),
+            ports: Some(vec!["80:80".to_string()]),
+            volumes: Some(vec!["./data:/data".to_string()]),
+            depends_on: Some(vec!["db".to_string()]),
+            restart: Some("always".to_string()),
+            command: Some("nginx -g 'daemon off;'".to_string()),
+            working_dir: Some("/app".to_string()),
+        };
+
+        let cloned = service.clone();
+
+        assert_eq!(cloned.image, service.image);
+        assert_eq!(
+            cloned.build.as_ref().unwrap().context,
+            service.build.as_ref().unwrap().context
+        );
+        assert_eq!(
+            cloned.build.as_ref().unwrap().dockerfile,
+            service.build.as_ref().unwrap().dockerfile
+        );
+        assert_eq!(
+            cloned.build.as_ref().unwrap().args,
+            service.build.as_ref().unwrap().args
+        );
+        assert_eq!(cloned.container_name, service.container_name);
+        assert_eq!(cloned.environment, service.environment);
+        assert_eq!(cloned.ports, service.ports);
+        assert_eq!(cloned.volumes, service.volumes);
+        assert_eq!(cloned.depends_on, service.depends_on);
+        assert_eq!(cloned.restart, service.restart);
+        assert_eq!(cloned.command, service.command);
+        assert_eq!(cloned.working_dir, service.working_dir);
+    }
+
+    #[test]
+    fn test_build_config_with_all_fields() {
+        // BuildConfig has three fields: context, dockerfile, args. Populate
+        // them all and assert each is preserved verbatim.
+        let build = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: Some(HashMap::from([("KEY".to_string(), "val".to_string())])),
+        };
+
+        assert_eq!(build.context.as_deref(), Some("."));
+        assert_eq!(build.dockerfile.as_deref(), Some("Dockerfile"));
+
+        let args_ref = build.args.as_ref().unwrap();
+        assert_eq!(args_ref.len(), 1);
+        assert_eq!(args_ref.get("KEY").map(|s| s.as_str()), Some("val"));
+    }
+
+    #[test]
+    fn test_network_config_with_all_fields() {
+        // NetworkConfig currently exposes `driver` and `external` only;
+        // populate both and assert they are preserved.
+        let net = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(true),
+        };
+
+        assert_eq!(net.driver.as_deref(), Some("bridge"));
+        assert_eq!(net.external, Some(true));
+    }
+
+    #[test]
+    fn test_volume_config_with_all_fields() {
+        // VolumeConfig currently exposes `driver` and `external` only;
+        // populate both and assert they are preserved.
+        let vol = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(false),
+        };
+
+        assert_eq!(vol.driver.as_deref(), Some("local"));
+        assert_eq!(vol.external, Some(false));
+    }
+
+    #[test]
+    fn test_service_with_all_fields() {
+        // Build a ComposeService with image, build, ports, volumes,
+        // environment, depends_on, and command all populated.
+        let mut env = HashMap::new();
+        env.insert("KEY".to_string(), "value".to_string());
+
+        let service = ComposeService {
+            image: Some("nginx:latest".to_string()),
+            build: Some(BuildConfig {
+                context: Some(".".to_string()),
+                dockerfile: Some("Dockerfile".to_string()),
+                args: None,
+            }),
+            container_name: None,
+            environment: Some(env),
+            ports: Some(vec!["80:80".to_string(), "443:443".to_string()]),
+            volumes: Some(vec!["./data:/data".to_string()]),
+            depends_on: Some(vec!["db".to_string()]),
+            restart: None,
+            command: Some("nginx -g 'daemon off;'".to_string()),
+            working_dir: None,
+        };
+
+        assert_eq!(service.image.as_deref(), Some("nginx:latest"));
+        assert_eq!(
+            service.build.as_ref().unwrap().context.as_deref(),
+            Some(".")
+        );
+        assert_eq!(
+            service
+                .environment
+                .as_ref()
+                .unwrap()
+                .get("KEY")
+                .map(|s| s.as_str()),
+            Some("value")
+        );
+        assert_eq!(service.ports.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            service.ports.as_ref().unwrap(),
+            &vec!["80:80".to_string(), "443:443".to_string()]
+        );
+        assert_eq!(
+            service.volumes.as_ref().unwrap(),
+            &vec!["./data:/data".to_string()]
+        );
+        assert_eq!(
+            service.depends_on.as_ref().unwrap(),
+            &vec!["db".to_string()]
+        );
+        assert_eq!(
+            service.command.as_deref(),
+            Some("nginx -g 'daemon off;'")
+        );
+    }
+
+    #[test]
+    fn test_ordered_services_deep_chain() {
+        // D -> C -> B -> A. The implementation pushes a service only after
+        // visiting its dependencies recursively, so the topological order is
+        // guaranteed to be [A, B, C, D] regardless of HashMap iteration order.
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        services.insert("a".to_string(), a);
+
+        let mut b = ComposeService::default();
+        b.image = Some("b".to_string());
+        b.depends_on = Some(vec!["a".to_string()]);
+        services.insert("b".to_string(), b);
+
+        let mut c = ComposeService::default();
+        c.image = Some("c".to_string());
+        c.depends_on = Some(vec!["b".to_string()]);
+        services.insert("c".to_string(), c);
+
+        let mut d = ComposeService::default();
+        d.image = Some("d".to_string());
+        d.depends_on = Some(vec!["c".to_string()]);
+        services.insert("d".to_string(), d);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 4);
+
+        let images: Vec<&str> = ordered
+            .iter()
+            .map(|s| s.image.as_deref().unwrap())
+            .collect();
+        assert_eq!(images, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_ordered_services_no_deps_returns_input_order() {
+        // Three services with no depends_on. The implementation iterates
+        // self.services.keys() in arbitrary order, so the resulting order
+        // is not guaranteed. Assert all 3 are present.
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        services.insert("a".to_string(), a);
+
+        let mut b = ComposeService::default();
+        b.image = Some("b".to_string());
+        services.insert("b".to_string(), b);
+
+        let mut c = ComposeService::default();
+        c.image = Some("c".to_string());
+        services.insert("c".to_string(), c);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 3);
+
+        let images: std::collections::HashSet<&str> = ordered
+            .iter()
+            .map(|s| s.image.as_deref().unwrap())
+            .collect();
+        assert!(images.contains("a"));
+        assert!(images.contains("b"));
+        assert!(images.contains("c"));
+    }
+
+    #[test]
+    fn test_from_yaml_with_version_3_8() {
+        // Single-service compose file with version "3.8". Verify the version
+        // is captured and the service is parsed with the expected image.
+        let yaml = r#"version: "3.8"
+services:
+  web:
+    image: nginx
+"#;
+        let compose = ComposeFile::from_yaml(yaml).unwrap();
+        assert_eq!(compose.version.as_deref(), Some("3.8"));
+        assert_eq!(compose.services.len(), 1);
+        assert!(compose.services.contains_key("web"));
+        assert_eq!(
+            compose.services["web"].image.as_deref(),
+            Some("nginx")
+        );
+    }
+
+    #[test]
+    fn test_compose_to_yaml_preserves_special_chars_in_env_values() {
+        // Environment values that contain spaces and colons must survive a
+        // YAML roundtrip intact. serde_yaml quotes such values automatically.
+        let mut env = HashMap::new();
+        env.insert(
+            "KEY".to_string(),
+            "value with spaces and: colons".to_string(),
+        );
+
+        let mut svc = ComposeService::default();
+        svc.image = Some("nginx".to_string());
+        svc.environment = Some(env);
+
+        let mut services = HashMap::new();
+        services.insert("web".to_string(), svc);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let yaml = compose.to_yaml().unwrap();
+        let parsed = ComposeFile::from_yaml(&yaml).unwrap();
+
+        assert_eq!(
+            parsed.services["web"]
+                .environment
+                .as_ref()
+                .unwrap()
+                .get("KEY")
+                .map(|s| s.as_str()),
+            Some("value with spaces and: colons")
+        );
+    }
 }

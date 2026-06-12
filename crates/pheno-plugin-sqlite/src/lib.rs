@@ -1093,4 +1093,412 @@ mod tests {
             );
         });
     }
+
+    // -- PluginError Display / Debug coverage --
+    //
+    // The pheno-plugin-core PluginError enum (see
+    // crates/pheno-plugin-core/src/error.rs:6) has these string-bearing
+    // variants: Initialization, NotFound, AlreadyRegistered, AlreadyExists,
+    // Operation, Config, Execution, Validation. The following tests pin the
+    // Display impl for three of them, and the Debug impl for one, by
+    // asserting the inner payload round-trips through `{}` / `{:?}`.
+
+    #[test]
+    fn test_plugin_error_not_found_display() {
+        // PluginError::NotFound is declared with `#[error("Plugin `{0}` not
+        // found in registry")]` (error.rs:11), so Display must include both
+        // the variant's keyword ("not found") and the inner payload.
+        let e = PluginError::NotFound("feature".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("feature"),
+            "NotFound Display should contain payload `feature`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_serialization_display() {
+        // PluginError::Serialization is declared as
+        // `Serialization(#[from] serde_json::Error)` (error.rs:30), so it
+        // cannot be constructed with a plain String. The proper way to
+        // exercise the variant is to coerce a real serde_json::Error via
+        // the `#[from]` blanket into PluginError::Serialization. We then
+        // assert that the resulting PluginError::Serialization's Display
+        // output (a) is non-empty and (b) embeds the inner serde error's
+        // own Display text — this is the only stable guarantee we can
+        // make about what `{}` of this variant produces, since serde
+        // does not echo the offending input back through its error.
+        let bad_json: serde_json::Error =
+            serde_json::from_str::<i32>("{ not valid json").unwrap_err();
+        let inner_text = bad_json.to_string();
+        let e: PluginError = bad_json.into();
+        let displayed = format!("{}", e);
+        assert!(
+            !displayed.is_empty(),
+            "Serialization Display should not be empty"
+        );
+        assert!(
+            displayed.contains(&inner_text),
+            "Serialization Display should embed inner serde error text `{}`, got: `{}`",
+            inner_text,
+            displayed
+        );
+        // Sanity: the variant name "Serialization" is part of the
+        // `#[error("Serialization error: {0}")]` format string
+        // (error.rs:29), so it must appear in Display.
+        assert!(
+            displayed.contains("Serialization"),
+            "Serialization Display should contain variant keyword `Serialization`, got: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_validation_display() {
+        // PluginError::Validation is declared with
+        // `#[error("Validation error: {0}")]` (error.rs:36). This is the
+        // variant lib.rs:163, lib.rs:167, lib.rs:281, lib.rs:285, and
+        // lib.rs:351 raise for missing/malformed input fields.
+        let e = PluginError::Validation("missing field".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("missing field"),
+            "Validation Display should contain payload `missing field`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_operation_display() {
+        // PluginError::Operation is declared with
+        // `#[error("Operation failed: {0}")]` (error.rs:21). lib.rs uses
+        // this for every rusqlite failure on INSERT/UPDATE/SELECT
+        // (lib.rs:178, lib.rs:245, lib.rs:300, lib.rs:340, lib.rs:366).
+        let e = PluginError::Operation("conflict".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("conflict"),
+            "Operation Display should contain payload `conflict`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_debug_includes_variant() {
+        // Debug for an enum-typed error must include the variant name.
+        // PluginError derives Debug (error.rs:6), so `{:?}` of
+        // `PluginError::NotFound(...)` should contain the substring
+        // "NotFound".
+        let e = PluginError::NotFound("x".to_string());
+        let debugged = format!("{:?}", e);
+        assert!(
+            debugged.contains("NotFound"),
+            "Debug for PluginError::NotFound should contain `NotFound`: `{}`",
+            debugged
+        );
+    }
+
+    // -- State-value defaults and round-trips --
+    //
+    // The codebase does not define `FeatureState` or `WorkPackageState`
+    // enums — feature and work-package state are represented as free-form
+    // TEXT values, with the schema-level defaults of "draft" (lib.rs:82)
+    // and "backlog" (lib.rs:92) respectively. The following four tests pin
+    // the implicit defaults and verify the canonical state values
+    // round-trip verbatim through the database.
+
+    #[test]
+    fn test_feature_state_default_or_first_variant() {
+        // No `state` field is provided on insert, so lib.rs:172 falls back
+        // to the schema default "draft". This test pins that contract.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "default-state-feature",
+                "name": "Default State Feature"
+            });
+            let id = plugin.create_feature(&feature).await.unwrap();
+
+            let retrieved = plugin.get_feature_by_id(id).await.unwrap();
+            assert!(retrieved.is_some(), "feature should exist after insert");
+            let state = retrieved.unwrap()["state"]
+                .as_str()
+                .expect("state should be a string")
+                .to_string();
+            assert_eq!(
+                state, "draft",
+                "missing `state` field should fall back to the schema default 'draft'"
+            );
+        });
+    }
+
+    #[test]
+    fn test_work_package_state_default_or_first_variant() {
+        // No `state` field is provided on insert, so lib.rs:290 falls back
+        // to the schema default "backlog". This test pins that contract.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "default-state-wp-host",
+                "name": "Default State WP Host"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let wp = serde_json::json!({
+                "feature_id": feature_id,
+                "title": "default-state-wp"
+            });
+            let wp_id = plugin.create_work_package(&wp).await.unwrap();
+
+            let retrieved = plugin.get_work_package(wp_id).await.unwrap();
+            assert!(retrieved.is_some(), "work package should exist after insert");
+            let state = retrieved.unwrap()["state"]
+                .as_str()
+                .expect("state should be a string")
+                .to_string();
+            assert_eq!(
+                state, "backlog",
+                "missing `state` field should fall back to the schema default 'backlog'"
+            );
+        });
+    }
+
+    #[test]
+    fn test_feature_state_serde_roundtrip() {
+        // Round-trip the canonical feature state values through the
+        // database and assert each one comes back byte-for-byte identical.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let canonical_states = ["draft", "active", "complete", "archived"];
+            for (i, state) in canonical_states.iter().enumerate() {
+                let feature = serde_json::json!({
+                    "slug": format!("rt-feature-{}", i),
+                    "name": format!("RT Feature {}", i),
+                    "state": state
+                });
+                let id = plugin.create_feature(&feature).await.unwrap();
+                let retrieved = plugin.get_feature_by_id(id).await.unwrap();
+                assert!(retrieved.is_some(), "feature {} should exist after insert", i);
+                let round_tripped = retrieved.unwrap()["state"]
+                    .as_str()
+                    .expect("state should be a string")
+                    .to_string();
+                assert_eq!(
+                    &round_tripped, state,
+                    "feature state should round-trip verbatim (input={:?}, got={:?})",
+                    state, round_tripped
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn test_work_package_state_serde_roundtrip() {
+        // Round-trip the canonical work-package state values through the
+        // database and assert each one comes back byte-for-byte identical.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "rt-wp-host",
+                "name": "RT WP Host"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let canonical_states = ["backlog", "ready", "in_progress", "done"];
+            for (i, state) in canonical_states.iter().enumerate() {
+                let wp = serde_json::json!({
+                    "feature_id": feature_id,
+                    "title": format!("RT WP {}", i),
+                    "state": state
+                });
+                let id = plugin.create_work_package(&wp).await.unwrap();
+                let retrieved = plugin.get_work_package(id).await.unwrap();
+                assert!(retrieved.is_some(), "work package {} should exist after insert", i);
+                let round_tripped = retrieved.unwrap()["state"]
+                    .as_str()
+                    .expect("state should be a string")
+                    .to_string();
+                assert_eq!(
+                    &round_tripped, state,
+                    "work package state should round-trip verbatim (input={:?}, got={:?})",
+                    state, round_tripped
+                );
+            }
+        });
+    }
+
+    // -- AdapterPlugin / StoragePlugin trait bridge --
+
+    #[test]
+    fn test_storage_plugin_name_and_version() {
+        // `StoragePlugin: AdapterPlugin` (traits.rs:185), so `name()` and
+        // `version()` are inherited from the supertrait. This test calls
+        // them on a value typed as `&dyn StoragePlugin` to make the trait
+        // bridge explicit and pin the expected values.
+        let plugin = create_test_plugin();
+        let storage: &dyn pheno_plugin_core::traits::StoragePlugin = &plugin;
+        assert_eq!(storage.name(), "sqlite-storage");
+        assert_eq!(storage.version(), env!("CARGO_PKG_VERSION"));
+        assert!(!storage.version().is_empty());
+    }
+
+    #[test]
+    fn test_adapter_plugin_health_check() {
+        // `AdapterPlugin::health_check` has a default impl returning
+        // `Ok(())` (traits.rs:64). `SqliteStoragePlugin` does not override
+        // it (lib.rs:136), so the default behavior applies: a fresh
+        // in-memory plugin must report healthy.
+        let plugin = create_test_plugin();
+        plugin
+            .health_check()
+            .expect("health_check should return Ok on a healthy in-memory plugin");
+    }
+
+    // -- Audit entry field parsing --
+
+    #[test]
+    fn test_audit_entry_details_contains_valid_json() {
+        // lib.rs:360 stores `details` via `value.to_string()`, i.e. the
+        // JSON-serialized form of the input value. For an input string,
+        // that means the stored TEXT is the JSON-encoded string literal.
+        // After retrieval, `details` is a JSON string that — once parsed —
+        // yields the original payload, and that payload in turn parses as
+        // a JSON object with the expected key/value.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-json-details",
+                "name": "Audit JSON Details"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let original_details = "{\"key\": \"value\"}";
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "entry_type": "json-test",
+                "actor": "test",
+                "details": original_details
+            });
+            plugin.append_audit_entry(&entry).await.unwrap();
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+
+            // The stored `details` is the JSON-serialized form of the
+            // input string (quotes wrapped around the original). Parse it
+            // back to recover the original payload.
+            let details_stored = trail[0]["details"]
+                .as_str()
+                .expect("details should be a JSON string");
+            let recovered: String = serde_json::from_str(details_stored)
+                .expect("stored details should parse as a JSON-encoded string");
+            assert_eq!(recovered, original_details);
+
+            // Now parse the recovered payload as JSON and assert the
+            // structure.
+            let parsed: serde_json::Value = serde_json::from_str(&recovered)
+                .expect("recovered payload should itself be valid JSON");
+            assert_eq!(parsed["key"], "value");
+        });
+    }
+
+    #[test]
+    fn test_audit_entry_created_at_is_valid_iso8601() {
+        // The schema sets `created_at` to CURRENT_TIMESTAMP (lib.rs:105),
+        // which SQLite formats as "YYYY-MM-DD HH:MM:SS" — ISO 8601 with a
+        // space separator. The task spec accepts a non-empty string check,
+        // so we do not parse the timestamp; we only confirm it is present
+        // and not the empty string.
+        let plugin = create_test_plugin();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let feature = serde_json::json!({
+                "slug": "audit-created-at",
+                "name": "Audit Created At"
+            });
+            let feature_id = plugin.create_feature(&feature).await.unwrap();
+
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "entry_type": "timestamp-test",
+                "actor": "test"
+            });
+            plugin.append_audit_entry(&entry).await.unwrap();
+
+            let trail = plugin.get_audit_trail(feature_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+
+            let created_at = trail[0]["created_at"]
+                .as_str()
+                .expect("created_at should be a string");
+            assert!(
+                !created_at.is_empty(),
+                "created_at should be a non-empty string, got: {:?}",
+                created_at
+            );
+        });
+    }
+
+    // -- Plugin lifecycle / accessors --
+
+    #[test]
+    fn test_plugin_initializes_with_in_memory_db() {
+        // SqliteStoragePlugin::initialize (lib.rs:145) runs a
+        // `SELECT COUNT(*) FROM sqlite_master` probe to confirm the
+        // migrated schema is in place. On a freshly-migrated in-memory
+        // plugin, this must return Ok, and the call must be idempotent
+        // (a second call on the same plugin still returns Ok).
+        let plugin = create_test_plugin();
+        let config = pheno_plugin_core::traits::PluginConfig {
+            name: "sqlite-storage".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            adapter_config: serde_json::json!({}),
+        };
+        plugin
+            .initialize(config.clone())
+            .expect("first initialize should succeed on a fresh in-memory plugin");
+        plugin
+            .initialize(config)
+            .expect("second initialize should also succeed (idempotent)");
+    }
+
+    #[test]
+    fn test_plugin_storage_path_reflects_db_path() {
+        // For a file-backed plugin, `db_path()` (lib.rs:407) must return
+        // exactly the path that was passed to `new()`. We assert on the
+        // returned `&Path` directly, which is what the production code
+        // exposes.
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!("pheno-plugin-sqlite-dbpath-{}-{}.db", pid, nanos));
+
+        let plugin = SqliteStoragePlugin::new(&path)
+            .expect("file-backed SqliteStoragePlugin::new should succeed");
+        assert_eq!(
+            plugin.db_path(),
+            path.as_path(),
+            "db_path() should return the exact path passed to new()"
+        );
+
+        // Clean up: drop the plugin (closes the Connection), then unlink
+        // the temp file.
+        drop(plugin);
+        let _ = std::fs::remove_file(&path);
+    }
 }

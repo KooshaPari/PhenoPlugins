@@ -276,4 +276,155 @@ mod tests {
         assert_eq!(progress.progress, None);
         assert_eq!(progress.speed, None);
     }
+
+    #[test]
+    fn test_image_new_with_simple_name() {
+        // A bare name with no ':' yields the name itself and defaults the tag to "latest".
+        let image = Image::new("nginx");
+        assert_eq!(image.name, "nginx");
+        assert_eq!(image.tag, "latest");
+        assert_eq!(image.id, "nginx");
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_new_with_name_and_tag() {
+        // `Image::new` splits on the first ':' to separate name and tag.
+        let image = Image::new("nginx:1.25");
+        assert_eq!(image.name, "nginx");
+        assert_eq!(image.tag, "1.25");
+        assert_eq!(image.id, "nginx:1.25");
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_new_with_name_and_digest() {
+        // The constructor splits on ':' only, so a digest ref like
+        // `nginx@sha256:abc` yields the literal `@`-prefixed name and `abc` as
+        // the tag. The full input is preserved in `id`, which is what callers
+        // can use to recover the digest.
+        let image = Image::new("nginx@sha256:abc");
+        assert_eq!(image.id, "nginx@sha256:abc");
+        assert!(image.id.contains("sha256"), "id must contain the digest: {}", image.id);
+        // Document the actual parser behavior (no special handling of '@').
+        assert_eq!(image.name, "nginx@sha256");
+        assert_eq!(image.tag, "abc");
+    }
+
+    #[test]
+    fn test_image_new_with_complex_name() {
+        // Path-style name with a version+variant tag stays split on the first ':'.
+        let image = Image::new("library/nginx:1.25-alpine");
+        assert_eq!(image.name, "library/nginx");
+        assert_eq!(image.tag, "1.25-alpine");
+        assert_eq!(image.id, "library/nginx:1.25-alpine");
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_new_with_registry_prefix() {
+        // A fully qualified registry/library/name:tag reference — the entire
+        // `docker.io/library/nginx` path stays in `name` and the tag is `latest`.
+        let image = Image::new("docker.io/library/nginx:latest");
+        assert_eq!(image.name, "docker.io/library/nginx");
+        assert_eq!(image.tag, "latest");
+        assert_eq!(image.id, "docker.io/library/nginx:latest");
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_new_with_no_tag_returns_latest() {
+        // A bare name (no ':') yields tag == "latest" via the default branch.
+        let image = Image::new("alpine");
+        assert_eq!(image.name, "alpine");
+        assert_eq!(image.tag, "latest");
+        assert_eq!(image.id, "alpine");
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_with_empty_tag() {
+        // Manually constructing an Image with an empty tag — `is_digest()` must
+        // return false because an empty string does not start with "sha256:".
+        let image = Image {
+            id: "nginx".to_string(),
+            name: "nginx".to_string(),
+            tag: String::new(),
+            size: 0,
+        };
+        assert!(image.tag.is_empty());
+        assert!(!image.is_digest(), "empty tag must not be classified as a digest");
+    }
+
+    #[test]
+    fn test_image_display_with_digest() {
+        // `Display` writes `name:tag`, so a digest-style tag yields a
+        // multi-colon reference. The rendered output must contain the digest
+        // prefix verbatim.
+        let image = Image {
+            id: "sha256:abcdef0123456789".to_string(),
+            name: "nginx".to_string(),
+            tag: "sha256:abcdef0123456789".to_string(),
+            size: 0,
+        };
+        let displayed = format!("{}", image);
+        assert!(
+            displayed.contains("sha256:abc"),
+            "Display must contain digest prefix, got: {displayed}"
+        );
+        assert!(displayed.contains("nginx"), "Display must contain name, got: {displayed}");
+        assert_eq!(displayed, "nginx:sha256:abcdef0123456789");
+    }
+
+    #[test]
+    fn test_image_with_zero_size() {
+        // A manually constructed image with size 0 must preserve it (no
+        // normalization, no overflow, no defaulting).
+        let image = Image {
+            id: "alpine:3.18".to_string(),
+            name: "alpine".to_string(),
+            tag: "3.18".to_string(),
+            size: 0,
+        };
+        assert_eq!(image.size, 0);
+    }
+
+    #[test]
+    fn test_image_with_huge_size() {
+        // The size field is u64; u64::MAX must round-trip with no overflow
+        // check and no clamping.
+        let image = Image {
+            id: "huge:latest".to_string(),
+            name: "huge".to_string(),
+            tag: "latest".to_string(),
+            size: u64::MAX,
+        };
+        assert_eq!(image.size, u64::MAX);
+    }
+
+    #[test]
+    fn test_image_pull_progress_with_all_fields() {
+        // All three fields populated — preserve each verbatim.
+        let progress = ImagePullProgress {
+            status: "Downloading".to_string(),
+            progress: Some(0.75),
+            speed: Some(2_500_000),
+        };
+        assert_eq!(progress.status, "Downloading");
+        assert_eq!(progress.progress, Some(0.75));
+        assert_eq!(progress.speed, Some(2_500_000));
+    }
+
+    #[test]
+    fn test_image_pull_progress_with_only_status() {
+        // Only the required `status` is set; both Options are None.
+        let progress = ImagePullProgress {
+            status: "downloading".to_string(),
+            progress: None,
+            speed: None,
+        };
+        assert_eq!(progress.status, "downloading");
+        assert_eq!(progress.progress, None);
+        assert_eq!(progress.speed, None);
+    }
 }
