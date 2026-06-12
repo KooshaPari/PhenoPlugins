@@ -348,4 +348,134 @@ mod tests {
         assert_ne!(container.status, ContainerStatus::Exited);
         assert_ne!(container.status, ContainerStatus::Dead);
     }
+
+    #[test]
+    fn test_container_debug_format() {
+        // `Container` derives `Debug`, so its `{:?}` representation must
+        // include the struct name and the field values.
+        let c = Container {
+            id: "abc".to_string(),
+            name: "web".to_string(),
+            image: "nginx".to_string(),
+            status: ContainerStatus::Running,
+        };
+        let dbg = format!("{:?}", c);
+        assert!(dbg.contains("Container"), "debug must include type name: {dbg}");
+        assert!(dbg.contains("abc"), "debug must include id: {dbg}");
+        assert!(dbg.contains("web"), "debug must include name: {dbg}");
+        assert!(
+            dbg.contains("nginx"),
+            "debug must include image: {dbg}"
+        );
+    }
+
+    #[test]
+    fn test_container_clone() {
+        // `Container` derives `Clone`, so cloning must yield a value with
+        // equal fields.
+        let original = Container {
+            id: "abc123def456".to_string(),
+            name: "web".to_string(),
+            image: "nginx:1.25".to_string(),
+            status: ContainerStatus::Paused,
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.id, original.id);
+        assert_eq!(cloned.name, original.name);
+        assert_eq!(cloned.image, original.image);
+        assert_eq!(cloned.status, original.status);
+    }
+
+    #[test]
+    fn test_container_is_running_true() {
+        // A container with `Running` status must report `is_running() == true`.
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Running,
+        };
+        assert!(c.is_running());
+    }
+
+    #[test]
+    fn test_container_is_stopped_true() {
+        // A container with `Exited` status must report `is_stopped() == true`.
+        let c = Container {
+            id: "id".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: ContainerStatus::Exited,
+        };
+        assert!(c.is_stopped());
+    }
+
+    #[test]
+    fn test_container_config_debug() {
+        // `ContainerConfig` derives `Debug`, so its `{:?}` representation
+        // must include the struct name and field values.
+        let cfg = ContainerConfig {
+            image: "nginx:1.25".to_string(),
+            name: Some("web".to_string()),
+            env: HashMap::new(),
+            cmd: None,
+            workdir: None,
+        };
+        let dbg = format!("{:?}", cfg);
+        assert!(
+            dbg.contains("ContainerConfig"),
+            "debug must include type name: {dbg}"
+        );
+        assert!(
+            dbg.contains("nginx:1.25"),
+            "debug must include image: {dbg}"
+        );
+        assert!(dbg.contains("web"), "debug must include name: {dbg}");
+    }
+
+    #[test]
+    fn test_container_config_with_env() {
+        // Environment variables passed into `ContainerConfig` must be
+        // preserved verbatim.
+        let mut env = HashMap::new();
+        env.insert("KEY".to_string(), "VAL".to_string());
+        env.insert("PATH".to_string(), "/usr/local/bin".to_string());
+
+        let cfg = ContainerConfig {
+            image: "redis:7".to_string(),
+            name: Some("cache".to_string()),
+            env: env.clone(),
+            cmd: None,
+            workdir: None,
+        };
+
+        assert_eq!(cfg.env.len(), 2);
+        assert_eq!(cfg.env.get("KEY").map(String::as_str), Some("VAL"));
+        assert_eq!(
+            cfg.env.get("PATH").map(String::as_str),
+            Some("/usr/local/bin")
+        );
+        // The `env` we passed in must be unchanged (no silent copy/move).
+        assert_eq!(env.len(), 2);
+    }
+
+    #[test]
+    fn test_container_config_with_command() {
+        // The `cmd` field must hold the exact command list that was provided.
+        let cfg = ContainerConfig {
+            image: "alpine:3.20".to_string(),
+            name: None,
+            env: HashMap::new(),
+            cmd: Some(vec!["sh".to_string(), "-c".to_string(), "echo hi".to_string()]),
+            workdir: Some("/tmp".to_string()),
+        };
+
+        let cmd = cfg.cmd.as_ref().expect("cmd should be Some");
+        assert_eq!(cmd.len(), 3);
+        assert_eq!(cmd[0], "sh");
+        assert_eq!(cmd[1], "-c");
+        assert_eq!(cmd[2], "echo hi");
+        assert_eq!(cfg.workdir.as_deref(), Some("/tmp"));
+        assert_eq!(cfg.image, "alpine:3.20");
+    }
 }

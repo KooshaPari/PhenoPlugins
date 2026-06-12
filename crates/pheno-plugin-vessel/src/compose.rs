@@ -501,4 +501,213 @@ services:
         assert!(service.build.as_ref().unwrap().dockerfile.is_none());
         assert!(service.build.as_ref().unwrap().args.is_none());
     }
+
+    #[test]
+    fn test_compose_default() {
+        // ComposeFile does not derive Default, so construct the equivalent
+        // "empty" value explicitly: empty services map and None for the
+        // optional fields — exactly what Default::default() would yield.
+        let c = ComposeFile {
+            version: None,
+            services: HashMap::new(),
+            networks: None,
+            volumes: None,
+        };
+        assert!(c.services.is_empty());
+        assert!(c.networks.is_none());
+        assert!(c.volumes.is_none());
+        assert!(c.version.is_none());
+    }
+
+    #[test]
+    fn test_compose_services_accessor() {
+        let mut services = HashMap::new();
+
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let mut db = ComposeService::default();
+        db.image = Some("postgres:15".to_string());
+        services.insert("db".to_string(), db);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let services_ref: &HashMap<String, ComposeService> = &compose.services;
+        assert_eq!(services_ref.len(), 2);
+        assert!(services_ref.contains_key("web"));
+        assert!(services_ref.contains_key("db"));
+        assert_eq!(
+            services_ref.get("web").unwrap().image.as_deref(),
+            Some("nginx:latest")
+        );
+        assert_eq!(
+            services_ref.get("db").unwrap().image.as_deref(),
+            Some("postgres:15")
+        );
+    }
+
+    #[test]
+    fn test_compose_debug_format() {
+        let mut services = HashMap::new();
+        let mut web = ComposeService::default();
+        web.image = Some("nginx:latest".to_string());
+        services.insert("web".to_string(), web);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let debug = format!("{:?}", compose);
+        assert!(debug.contains("ComposeFile"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("services"), "debug should contain field name: {}", debug);
+        assert!(debug.contains("web"), "debug should contain service name: {}", debug);
+    }
+
+    #[test]
+    fn test_build_config_default() {
+        // BuildConfig does not derive Default, so construct the equivalent
+        // all-None value explicitly.
+        let b = BuildConfig { context: None, dockerfile: None, args: None };
+        assert!(b.context.is_none());
+        assert!(b.dockerfile.is_none());
+        assert!(b.args.is_none());
+    }
+
+    #[test]
+    fn test_network_config_default() {
+        let n = NetworkConfig { driver: None, external: None };
+        assert!(n.driver.is_none());
+        assert!(n.external.is_none());
+    }
+
+    #[test]
+    fn test_volume_config_default() {
+        let v = VolumeConfig { driver: None, external: None };
+        assert!(v.driver.is_none());
+        assert!(v.external.is_none());
+    }
+
+    #[test]
+    fn test_build_config_debug() {
+        let b = BuildConfig {
+            context: Some(".".to_string()),
+            dockerfile: Some("Dockerfile".to_string()),
+            args: None,
+        };
+        let debug = format!("{:?}", b);
+        assert!(debug.contains("BuildConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("Dockerfile"), "debug should contain dockerfile value: {}", debug);
+        assert!(debug.contains("."), "debug should contain context value: {}", debug);
+    }
+
+    #[test]
+    fn test_network_config_debug() {
+        let n = NetworkConfig {
+            driver: Some("bridge".to_string()),
+            external: Some(false),
+        };
+        let debug = format!("{:?}", n);
+        assert!(debug.contains("NetworkConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("bridge"), "debug should contain driver value: {}", debug);
+    }
+
+    #[test]
+    fn test_volume_config_debug() {
+        let v = VolumeConfig {
+            driver: Some("local".to_string()),
+            external: Some(true),
+        };
+        let debug = format!("{:?}", v);
+        assert!(debug.contains("VolumeConfig"), "debug should contain struct name: {}", debug);
+        assert!(debug.contains("local"), "debug should contain driver value: {}", debug);
+    }
+
+    #[test]
+    fn test_ordered_services_with_circular_dep() {
+        // A depends on B, and B depends on A. The implementation guards
+        // against infinite recursion via a `visited` set, so both services
+        // should still appear in the result (in some order, without panicking).
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        a.depends_on = Some(vec!["b".to_string()]);
+        services.insert("a".to_string(), a);
+
+        let mut b = ComposeService::default();
+        b.image = Some("b".to_string());
+        b.depends_on = Some(vec!["a".to_string()]);
+        services.insert("b".to_string(), b);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 2);
+        let images: Vec<&str> =
+            ordered.iter().map(|s| s.image.as_deref().unwrap()).collect();
+        assert!(images.contains(&"a"));
+        assert!(images.contains(&"b"));
+    }
+
+    #[test]
+    fn test_ordered_services_with_self_referential() {
+        // A depends on itself. The `visited` set should prevent infinite
+        // recursion, so A appears exactly once in the result.
+        let mut services = HashMap::new();
+
+        let mut a = ComposeService::default();
+        a.image = Some("a".to_string());
+        a.depends_on = Some(vec!["a".to_string()]);
+        services.insert("a".to_string(), a);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        let ordered = compose.ordered_services();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].image.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn test_compose_to_yaml_does_not_panic_with_special_chars() {
+        let mut services = HashMap::new();
+        let mut svc = ComposeService::default();
+        svc.image = Some("nginx:latest".to_string());
+        services.insert("service-with-dashes_and_underscores".to_string(), svc);
+
+        let compose = ComposeFile {
+            version: None,
+            services,
+            networks: None,
+            volumes: None,
+        };
+
+        // Round-trip should not panic and should preserve the name verbatim.
+        let yaml = compose.to_yaml().unwrap();
+        let parsed = ComposeFile::from_yaml(&yaml).unwrap();
+
+        assert!(parsed.services.contains_key("service-with-dashes_and_underscores"));
+        assert_eq!(
+            parsed.services["service-with-dashes_and_underscores"].image.as_deref(),
+            Some("nginx:latest")
+        );
+    }
 }
