@@ -11,6 +11,7 @@
 //! the standard library.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use pheno_plugin_core::error::PluginError;
 use pheno_plugin_core::traits::{AdapterPlugin, StoragePlugin};
@@ -747,5 +748,596 @@ fn test_duplicate_slug_returns_operation_error() {
             .expect("first insert should still be present");
         assert_eq!(still_there["id"].as_i64(), Some(first_id));
         assert_eq!(still_there["name"], "First Dup");
+    });
+}
+
+// =============================================================================
+// 11. Concurrent reads via Arc::clone of the inner connection
+// =============================================================================
+
+#[test]
+fn test_concurrent_reads_via_clone() {
+    // Documents that `plugin.connection()` returns an `Arc<Mutex<Connection>>`
+    // which can be cloned cheaply and locked multiple times sequentially to
+    // observe the same data. The Mutex guard is dropped at the end of each
+    // block (before the next lock) — `std::sync::MutexGuard` is `!Send` and
+    // the underlying `Connection` is `!Sync`, so consumers must release the
+    // guard before any `await` point. This test pins down the safe pattern.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // Seed the database so the reads have something to observe.
+        let feature = serde_json::json!({
+            "slug": "read-clone",
+            "name": "Read Clone"
+        });
+        let id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+        assert!(id > 0, "created feature id should be positive");
+
+        // `plugin.connection()` returns Arc<Mutex<Connection>>. Each call
+        // hands out a fresh Arc that points to the same underlying
+        // allocation as every other Arc owned by the plugin.
+        let conn_a = plugin.connection();
+        let conn_b = plugin.connection();
+        let conn_c = plugin.connection();
+        assert!(
+            Arc::ptr_eq(&conn_a, &conn_b),
+            "Arcs returned by connection() should share the same allocation"
+        );
+        assert!(
+            Arc::ptr_eq(&conn_b, &conn_c),
+            "Arcs returned by connection() should share the same allocation"
+        );
+
+        // Three sequential reads, each in its own block so the MutexGuard
+        // is dropped before the next `lock()`. The reads alternate between
+        // the three Arcs to prove that any of them can drive a read.
+        {
+            let guard = conn_a.lock().expect("lock a poisoned");
+            let name: String = guard
+                .query_row(
+                    "SELECT name FROM features WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .expect("read 1 should succeed");
+            assert_eq!(name, "Read Clone", "read 1 should see the seeded feature");
+        }
+        {
+            let guard = conn_b.lock().expect("lock b poisoned");
+            let state: String = guard
+                .query_row(
+                    "SELECT state FROM features WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .expect("read 2 should succeed");
+            assert_eq!(state, "draft", "read 2 should see the default state");
+        }
+        {
+            let guard = conn_c.lock().expect("lock c poisoned");
+            let count: i64 = guard
+                .query_row("SELECT COUNT(*) FROM features", [], |r| r.get(0))
+                .expect("read 3 should succeed");
+            assert_eq!(count, 1, "read 3 should see exactly one feature");
+        }
+        // A fourth read through conn_a proves the Arc is still usable
+        // after the interleaved uses of the other Arcs.
+        {
+            let guard = conn_a.lock().expect("lock a poisoned (reacquire)");
+            let slug: String = guard
+                .query_row(
+                    "SELECT slug FROM features WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .expect("read 4 should succeed");
+            assert_eq!(slug, "read-clone", "read 4 should see the original slug");
+        }
+    });
+}
+
+// =============================================================================
+// 12. Sequential writes serialize via the internal Mutex
+// =============================================================================
+
+#[test]
+fn test_concurrent_writes_serialize_via_mutex() {
+    // The plugin guards its single `Connection` with a `std::sync::Mutex`.
+    // That guard is `!Send`, so we cannot `tokio::spawn` a future that
+    // holds it across an `await` point. The safe pattern — and the one
+    // this test documents — is to drive all 10 inserts from the same
+    // task via sequential `.await`s, relying on the Mutex to serialize
+    // them implicitly. After the loop, `list_all_features()` should
+    // report exactly 10 rows.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut ids: Vec<i64> = Vec::with_capacity(10);
+        for i in 0..10 {
+            let feature = serde_json::json!({
+                "slug": format!("concurrent-write-{}", i),
+                "name": format!("Concurrent Write {}", i)
+            });
+            let id = plugin
+                .create_feature(&feature)
+                .await
+                .unwrap_or_else(|e| panic!("create_feature #{} should succeed: {:?}", i, e));
+            assert!(id > 0, "created id for #{} should be positive, got {}", i, id);
+            ids.push(id);
+        }
+
+        // All 10 ids should be distinct (AUTOINCREMENT gives unique ids).
+        assert_eq!(ids.len(), 10);
+        let mut sorted_ids = ids.clone();
+        sorted_ids.sort();
+        sorted_ids.dedup();
+        assert_eq!(
+            sorted_ids.len(),
+            10,
+            "all 10 inserts should have produced unique ids"
+        );
+
+        // list_all_features() must reflect all 10 committed writes.
+        let all = plugin
+            .list_all_features()
+            .await
+            .expect("list_all_features should succeed");
+        assert_eq!(
+            all.len(),
+            10,
+            "expected 10 features in the database, got {}",
+            all.len()
+        );
+
+        // Round-trip each one by slug to confirm every write was durable.
+        for i in 0..10 {
+            let slug = format!("concurrent-write-{}", i);
+            let found = plugin
+                .get_feature_by_slug(&slug)
+                .await
+                .expect("get_feature_by_slug should succeed")
+                .unwrap_or_else(|| panic!("feature {} should exist after the sequential writes", slug));
+            assert_eq!(found["slug"], slug);
+            assert_eq!(found["name"], format!("Concurrent Write {}", i));
+            assert_eq!(found["state"], "draft", "default state should be 'draft'");
+        }
+    });
+}
+
+// =============================================================================
+// 13. WAL journal mode is enabled after init (file-backed only)
+// =============================================================================
+
+#[test]
+fn test_wal_mode_enabled_after_init() {
+    // Verifies that `SqliteStoragePlugin::new` (lib.rs:38) issues
+    // `PRAGMA journal_mode=WAL;` and that the pragma actually takes
+    // effect on a real on-disk database. In-memory databases ignore WAL
+    // and report "memory" instead, so we use a file-backed plugin here.
+    let path = unique_db_path("wal-mode");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new(file path) should succeed");
+    let conn_arc = plugin.connection();
+    let mode: String = conn_arc
+        .lock()
+        .expect("lock poisoned")
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+        .expect("PRAGMA journal_mode should succeed");
+    assert_eq!(
+        mode, "wal",
+        "WAL journal mode should be enabled after init, got {:?}",
+        mode
+    );
+
+    // Drop the plugin before removing the file so the file handle is
+    // released (and the WAL is checkpointed) on platforms that need it.
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 14. Foreign-key enforcement is enabled (makes the FK constraints bite)
+// =============================================================================
+
+#[test]
+fn test_foreign_keys_enabled() {
+    // Verifies that `SqliteStoragePlugin::new` (lib.rs:42) issues
+    // `PRAGMA foreign_keys=ON;`. Without this pragma, SQLite parses but
+    // does not enforce the `FOREIGN KEY (feature_id) REFERENCES
+    // features(id)` clause on `work_packages` and `audit_entries` —
+    // meaning the existing `test_create_work_package_with_invalid_feature_id`
+    // test would silently let orphan rows through. This test pins the
+    // pragma on.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let conn_arc = plugin.connection();
+    let fk: i64 = conn_arc
+        .lock()
+        .expect("lock poisoned")
+        .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+        .expect("PRAGMA foreign_keys should succeed");
+    assert_eq!(
+        fk, 1,
+        "foreign-key enforcement should be enabled, got {}",
+        fk
+    );
+}
+
+// =============================================================================
+// 15. The `plugin_metadata` table exists after init
+// =============================================================================
+
+#[test]
+fn test_metadata_table_exists_after_init() {
+    // Documents the table created at lib.rs:109-113 by `run_migrations`.
+    // The table is currently unused by the storage API, but downstream
+    // tooling reads it for adapter health-checks, so it must be present
+    // after `new()` / `initialize()`.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let conn_arc = plugin.connection();
+
+    // `sqlite_master` lists every table/index/view/trigger in the
+    // database. We restrict to `type='table'` to ignore the autoindexes
+    // SQLite creates for UNIQUE constraints.
+    let result: Result<String, rusqlite::Error> = conn_arc
+        .lock()
+        .expect("lock poisoned")
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plugin_metadata'",
+            [],
+            |r| r.get(0),
+        );
+
+    match result {
+        Ok(name) => assert_eq!(
+            name, "plugin_metadata",
+            "sqlite_master should report the plugin_metadata table"
+        ),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            panic!("plugin_metadata table should exist after init, but it was not found")
+        }
+        Err(e) => panic!("unexpected error querying sqlite_master: {}", e),
+    }
+
+    // Spot-check: the four tables created by run_migrations are all
+    // present. This guards against accidental drops in the migration
+    // string.
+    let expected_tables = ["features", "work_packages", "audit_entries", "plugin_metadata"];
+    for table in expected_tables.iter() {
+        let found: String = conn_arc
+            .lock()
+            .expect("lock poisoned")
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|e| panic!("table {} should exist after init: {}", table, e));
+        assert_eq!(&found, table, "expected table name to match");
+    }
+}
+
+// =============================================================================
+// 16. Audit trail round-trips multiple entries with parseable timestamps
+// =============================================================================
+
+#[test]
+fn test_audit_trail_chronological_insertion() {
+    // Append 3 audit entries with a short sleep between them. The sleep
+    // is too short (50ms) to force distinct CURRENT_TIMESTAMP values
+    // (SQLite CURRENT_TIMESTAMP has 1-second resolution), so we
+    // deliberately do NOT assert a strict ordering. We only verify that:
+    //   (a) all three entries were committed (trail.len() == 3), and
+    //   (b) every entry's `created_at` is a well-formed SQLite
+    //       CURRENT_TIMESTAMP string ("YYYY-MM-DD HH:MM:SS", 19 chars).
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "audit-chrono",
+            "name": "Audit Chrono"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+
+        for actor in ["alpha", "beta", "gamma"].iter() {
+            let entry = serde_json::json!({
+                "feature_id": feature_id,
+                "entry_type": "chained",
+                "actor": actor,
+                "details": format!("entry-by-{}", actor)
+            });
+            plugin
+                .append_audit_entry(&entry)
+                .await
+                .expect("append_audit_entry should succeed");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let trail = plugin
+            .get_audit_trail(feature_id)
+            .await
+            .expect("get_audit_trail should succeed");
+        assert_eq!(trail.len(), 3, "all three entries should be present");
+
+        // Every entry's created_at should be a 19-char string shaped
+        // like "YYYY-MM-DD HH:MM:SS" — the format SQLite's
+        // CURRENT_TIMESTAMP always returns. We do not assert that the
+        // three timestamps are distinct.
+        for e in trail.iter() {
+            let ts = e["created_at"]
+                .as_str()
+                .unwrap_or_else(|| panic!("created_at should be a string, got {:?}", e));
+            assert_eq!(ts.len(), 19, "timestamp should be 19 chars, got {:?}", ts);
+            let bytes = ts.as_bytes();
+            assert_eq!(bytes[4], b'-', "expected '-' at index 4 in {:?}", ts);
+            assert_eq!(bytes[7], b'-', "expected '-' at index 7 in {:?}", ts);
+            assert_eq!(bytes[10], b' ', "expected ' ' at index 10 in {:?}", ts);
+            assert_eq!(bytes[13], b':', "expected ':' at index 13 in {:?}", ts);
+            assert_eq!(bytes[16], b':', "expected ':' at index 16 in {:?}", ts);
+            // The other 14 bytes are ASCII digits (0-9). Spot-check a
+            // couple so we don't accept a string of arbitrary punctuation.
+            assert!(bytes[0].is_ascii_digit(), "expected digit at index 0 in {:?}", ts);
+            assert!(bytes[18].is_ascii_digit(), "expected digit at index 18 in {:?}", ts);
+        }
+
+        // The actors should all be present, regardless of DESC ordering.
+        let mut actors: Vec<&str> = trail
+            .iter()
+            .map(|e| e["actor"].as_str().expect("actor should be a string"))
+            .collect();
+        actors.sort();
+        assert_eq!(actors, vec!["alpha", "beta", "gamma"]);
+    });
+}
+
+// =============================================================================
+// 17. Work-package state machine: backlog -> in_progress -> done
+// =============================================================================
+
+#[test]
+fn test_create_work_package_then_update_state_to_done() {
+    // Full state-machine flow for a single work package: created in
+    // 'backlog' (the default from lib.rs:290), transitioned to
+    // 'in_progress', then to 'done'. After every transition we re-read
+    // the row via `get_work_package` and assert the state matches.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "wp-state-flow",
+            "name": "WP State Flow"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+
+        // Create the WP without specifying a state — default is "backlog".
+        let wp = serde_json::json!({
+            "feature_id": feature_id,
+            "title": "State Flow WP",
+            "priority": "high"
+        });
+        let wp_id = plugin
+            .create_work_package(&wp)
+            .await
+            .expect("create_work_package should succeed");
+        assert!(wp_id > 0);
+
+        // Step 1: read back the default state.
+        let after_create = plugin
+            .get_work_package(wp_id)
+            .await
+            .expect("get_work_package should succeed")
+            .expect("work package should exist after create");
+        assert_eq!(
+            after_create["state"], "backlog",
+            "default state for a new work package should be 'backlog'"
+        );
+        assert_eq!(after_create["title"], "State Flow WP");
+        assert_eq!(after_create["priority"], "high");
+
+        // Step 2: backlog -> in_progress.
+        plugin
+            .update_wp_state(wp_id, "in_progress")
+            .await
+            .expect("update_wp_state backlog -> in_progress should succeed");
+        let after_in_progress = plugin
+            .get_work_package(wp_id)
+            .await
+            .expect("get_work_package should succeed")
+            .expect("work package should still exist after first update");
+        assert_eq!(
+            after_in_progress["state"], "in_progress",
+            "state should be 'in_progress' after the first update"
+        );
+
+        // Step 3: in_progress -> done.
+        plugin
+            .update_wp_state(wp_id, "done")
+            .await
+            .expect("update_wp_state in_progress -> done should succeed");
+        let after_done = plugin
+            .get_work_package(wp_id)
+            .await
+            .expect("get_work_package should succeed")
+            .expect("work package should still exist after second update");
+        assert_eq!(
+            after_done["state"], "done",
+            "state should be 'done' after the second update"
+        );
+
+        // The other fields should not have been clobbered by the state
+        // updates — sanity-check title and priority round-trip.
+        assert_eq!(after_done["title"], "State Flow WP");
+        assert_eq!(after_done["priority"], "high");
+    });
+}
+
+// =============================================================================
+// 18. AdapterPlugin::initialize() succeeds on a fresh file-backed plugin
+// =============================================================================
+
+#[test]
+fn test_initialize_succeeds_on_fresh_db() {
+    // Documents the AdapterPlugin::initialize() contract (lib.rs:145-151):
+    // against a freshly-migrated file-backed database, initialize() must
+    // return Ok(()) without touching the schema. We do NOT call
+    // create_feature or any other write — initialize should be a pure
+    // health check.
+    let path = unique_db_path("init-fresh");
+    let plugin = SqliteStoragePlugin::new(&path).expect("new should succeed against a fresh path");
+    plugin
+        .initialize(default_config())
+        .expect("initialize should succeed against a fresh file-backed plugin");
+    drop(plugin);
+    let _ = std::fs::remove_file(&path);
+}
+
+// =============================================================================
+// 19. AdapterPlugin::initialize() is idempotent
+// =============================================================================
+
+#[test]
+fn test_initialize_succeeds_twice() {
+    // The AdapterPlugin contract promises that initialize() is safe to
+    // re-run. The implementation at lib.rs:145-151 runs a single
+    // `SELECT COUNT(*) FROM sqlite_master` as a smoke test; running it
+    // twice on the same plugin must not error and must not corrupt
+    // state. We re-read a feature between the two calls as a state
+    // guard.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // First initialize.
+    plugin
+        .initialize(default_config())
+        .expect("first initialize should succeed");
+
+    // Insert a feature and confirm it is readable between the two
+    // initialize calls (state guard).
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "init-twice",
+            "name": "Init Twice"
+        });
+        let id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature between initializes should succeed");
+        let read = plugin
+            .get_feature_by_id(id)
+            .await
+            .expect("get_feature_by_id between initializes should succeed")
+            .expect("feature should be readable between initializes");
+        assert_eq!(read["name"], "Init Twice");
+    });
+
+    // Second initialize — must not error and must not wipe the row.
+    plugin
+        .initialize(default_config())
+        .expect("second initialize should also succeed (idempotent)");
+
+    rt.block_on(async {
+        let still = plugin
+            .get_feature_by_slug("init-twice")
+            .await
+            .expect("get_feature_by_slug after second initialize should succeed")
+            .expect("feature should still be present after a second initialize");
+        assert_eq!(still["name"], "Init Twice");
+    });
+}
+
+// =============================================================================
+// 20. Audit-entry `details` round-trips special characters verbatim
+// =============================================================================
+
+#[test]
+fn test_audit_trail_with_special_characters_in_details() {
+    // The production code at lib.rs:360 stores `details` as
+    // `entry.get("details").map(|v| v.to_string())` — the JSON-serialized
+    // form of the value, which for a JSON string adds surrounding quotes
+    // and escapes inner quotes/backslashes. This test pins down that the
+    // round-trip preserves the original payload (modulo the JSON-string
+    // wrapping) when the payload contains characters that are
+    // interesting in a few different ways: embedded double-quotes,
+    // ampersand, angle brackets.
+    let plugin = SqliteStoragePlugin::in_memory().expect("in_memory should succeed");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let feature = serde_json::json!({
+            "slug": "audit-special",
+            "name": "Audit Special"
+        });
+        let feature_id = plugin
+            .create_feature(&feature)
+            .await
+            .expect("create_feature should succeed");
+
+        // The payload we will store: a JSON-shaped string with escaped
+        // quotes, an ampersand, and angle brackets. After Rust-string
+        // parsing the variable holds the literal 56 characters
+        //   {"key": "value with \"escaped\" quotes & <html>"}
+        let details_payload = "{\"key\": \"value with \\\"escaped\\\" quotes & <html>\"}";
+
+        let entry = serde_json::json!({
+            "feature_id": feature_id,
+            "entry_type": "special",
+            "actor": "test",
+            "details": details_payload
+        });
+        let audit_id = plugin
+            .append_audit_entry(&entry)
+            .await
+            .expect("append_audit_entry should succeed");
+        assert!(audit_id > 0);
+
+        let trail = plugin
+            .get_audit_trail(feature_id)
+            .await
+            .expect("get_audit_trail should succeed");
+        assert_eq!(trail.len(), 1, "exactly one entry should be returned");
+
+        // The DB column holds the JSON-serialized form of the value
+        // (lib.rs:360: `v.to_string()`), so a JSON string is stored
+        // wrapped in quotes with its inner quotes backslash-escaped.
+        // `serde_json::json!(details_payload).to_string()` reproduces
+        // that wrapping deterministically.
+        let stored = trail[0]["details"]
+            .as_str()
+            .expect("details should be a string in the read-back");
+        let expected_json_form = serde_json::json!(details_payload).to_string();
+        assert_eq!(
+            stored, expected_json_form,
+            "details should round-trip through the JSON-serialized storage"
+        );
+
+        // Independent spot-checks for each "special" class of character.
+        // These run against the stored form, so they include the outer
+        // quotes and the escaped inner quotes added by JSON
+        // serialization.
+        assert!(
+            stored.contains("escaped"),
+            "stored details should still contain the literal word 'escaped', got: {}",
+            stored
+        );
+        assert!(
+            stored.contains('&'),
+            "stored details should still contain the ampersand, got: {}",
+            stored
+        );
+        assert!(
+            stored.contains("<html>"),
+            "stored details should still contain the angle-bracketed token, got: {}",
+            stored
+        );
+        // The entry_type and actor must also round-trip untouched.
+        assert_eq!(trail[0]["entry_type"], "special");
+        assert_eq!(trail[0]["actor"], "test");
     });
 }

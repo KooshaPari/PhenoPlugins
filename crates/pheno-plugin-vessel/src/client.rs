@@ -132,7 +132,115 @@ pub enum ContainerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::DockerRuntime;
+    use crate::runtime::{ContainerCreateConfig, ContainerInfo, DockerRuntime};
+    use async_trait::async_trait;
+
+    /// MockRuntime: a configurable test double for `ContainerRuntime`.
+    ///
+    /// Each method returns a pre-configured `Result`. Defaults are
+    /// happy-path (`Ok`). Tests override individual fields via the
+    /// `with_*` builder methods to inject failures. This lets us
+    /// exercise `ContainerClient`'s error mapping and return-value
+    /// construction without spawning docker/podman subprocesses.
+    struct MockRuntime {
+        name: String,
+        list_result: Result<Vec<ContainerInfo>, String>,
+        pull_result: Result<(), String>,
+        remove_image_result: Result<(), String>,
+        create_result: Result<String, String>,
+        start_result: Result<(), String>,
+        stop_result: Result<(), String>,
+        remove_container_result: Result<(), String>,
+        logs_result: Result<String, String>,
+        available: bool,
+    }
+
+    impl MockRuntime {
+        /// Build a `MockRuntime` with the given name. `list_result` is
+        /// supplied directly; all other methods default to a happy-path
+        /// `Ok`. Use the `with_*` builder methods to override specific
+        /// fields.
+        fn new(name: &str, list_result: Result<Vec<ContainerInfo>, String>) -> Self {
+            Self {
+                name: name.to_string(),
+                list_result,
+                pull_result: Ok(()),
+                remove_image_result: Ok(()),
+                create_result: Ok("mock-container-id".to_string()),
+                start_result: Ok(()),
+                stop_result: Ok(()),
+                remove_container_result: Ok(()),
+                logs_result: Ok("mock log output".to_string()),
+                available: true,
+            }
+        }
+
+        fn with_pull_result(mut self, r: Result<(), String>) -> Self {
+            self.pull_result = r;
+            self
+        }
+
+        fn with_create_result(mut self, r: Result<String, String>) -> Self {
+            self.create_result = r;
+            self
+        }
+
+        fn with_remove_container_result(mut self, r: Result<(), String>) -> Self {
+            self.remove_container_result = r;
+            self
+        }
+
+        fn with_logs_result(mut self, r: Result<String, String>) -> Self {
+            self.logs_result = r;
+            self
+        }
+    }
+
+    #[async_trait]
+    impl ContainerRuntime for MockRuntime {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn is_available(&self) -> bool {
+            self.available
+        }
+
+        async fn list_containers(&self) -> Result<Vec<ContainerInfo>, String> {
+            self.list_result.clone()
+        }
+
+        async fn pull_image(&self, _image: &str) -> Result<(), String> {
+            self.pull_result.clone()
+        }
+
+        async fn remove_image(&self, _image: &str) -> Result<(), String> {
+            self.remove_image_result.clone()
+        }
+
+        async fn create_container(
+            &self,
+            _config: &ContainerCreateConfig,
+        ) -> Result<String, String> {
+            self.create_result.clone()
+        }
+
+        async fn start_container(&self, _id: &str) -> Result<(), String> {
+            self.start_result.clone()
+        }
+
+        async fn stop_container(&self, _id: &str) -> Result<(), String> {
+            self.stop_result.clone()
+        }
+
+        async fn remove_container(&self, _id: &str) -> Result<(), String> {
+            self.remove_container_result.clone()
+        }
+
+        async fn logs(&self, _id: &str) -> Result<String, String> {
+            self.logs_result.clone()
+        }
+    }
 
     #[test]
     fn test_container_client_new() {
@@ -187,5 +295,171 @@ mod tests {
     async fn test_container_client_is_available_returns_bool() {
         let client = ContainerClient::new(DockerRuntime);
         let _: bool = client.is_available().await;
+    }
+
+    // -----------------------------------------------------------------
+    // MockRuntime-backed tests: exercise ContainerClient behavior
+    // (error mapping, return-value construction) without requiring
+    // docker/podman subprocesses to exist on the test host.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_mock_runtime_construction() {
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        assert_eq!(mock.name(), "test");
+        assert!(mock.is_available().await);
+    }
+
+    #[tokio::test]
+    async fn test_client_list_containers_success() {
+        let info = ContainerInfo {
+            id: "abc".to_string(),
+            name: "web".to_string(),
+            image: "nginx:1.25".to_string(),
+            status: "running".to_string(),
+            created: "2024-01-01".to_string(),
+        };
+        let mock = MockRuntime::new("test", Ok(vec![info]));
+        let client = ContainerClient::new(mock);
+
+        let result = client
+            .list_containers()
+            .await
+            .expect("list_containers should succeed");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "abc");
+        assert_eq!(result[0].name, "web");
+        assert_eq!(result[0].image, "nginx:1.25");
+        assert_eq!(result[0].status, "running");
+        assert_eq!(result[0].created, "2024-01-01");
+    }
+
+    #[tokio::test]
+    async fn test_client_list_containers_runtime_error() {
+        let mock = MockRuntime::new("test", Err("daemon down".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.list_containers().await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "daemon down"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_pull_image_success() {
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        let client = ContainerClient::new(mock);
+
+        let image = client
+            .pull_image("nginx:1.25")
+            .await
+            .expect("pull_image should succeed");
+
+        // Verifies the client's Image construction (client.rs:38-47):
+        // the requested ref is used for both id and name, the tag is
+        // hard-coded to "latest", and the size is 0.
+        assert_eq!(image.id, "nginx:1.25");
+        assert_eq!(image.name, "nginx:1.25");
+        assert_eq!(image.tag, "latest");
+        assert_eq!(image.size, 0);
+    }
+
+    #[tokio::test]
+    async fn test_client_pull_image_runtime_error() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_pull_result(Err("pull failed".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.pull_image("nginx:1.25").await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "pull failed"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_run_creates_running_container() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_create_result(Ok("id123".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let container = client
+            .run("nginx:1.25", "web")
+            .await
+            .expect("run should succeed");
+
+        // run() should call create_container (returning the id from the
+        // mock) and start_container (Ok), then build a Container with
+        // ContainerStatus::Running.
+        assert_eq!(container.id, "id123");
+        assert_eq!(container.name, "web");
+        assert_eq!(container.image, "nginx:1.25");
+        assert_eq!(container.status, ContainerStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_client_run_create_failure() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_create_result(Err("create failed".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.run("nginx:1.25", "web").await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "create failed"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_create_returns_created_status() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_create_result(Ok("id456".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let container = client
+            .create("nginx:1.25", "web")
+            .await
+            .expect("create should succeed");
+
+        // create() does NOT call start_container, so the returned
+        // Container must be ContainerStatus::Created, not Running.
+        assert_eq!(container.id, "id456");
+        assert_eq!(container.name, "web");
+        assert_eq!(container.image, "nginx:1.25");
+        assert_eq!(container.status, ContainerStatus::Created);
+        assert_ne!(container.status, ContainerStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_client_remove_container_runtime_error() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_remove_container_result(Err("rm failed".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.rm("abc").await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "rm failed"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_logs_runtime_error() {
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_logs_result(Err("log fetch failed".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.logs("abc").await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "log fetch failed"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
     }
 }

@@ -638,4 +638,194 @@ mod tests {
         let d2 = d1.clone();
         assert_eq!(d1.name(), d2.name());
     }
+
+    #[test]
+    fn test_docker_runtime_debug() {
+        assert_eq!(format!("{:?}", DockerRuntime::new()), "DockerRuntime");
+    }
+
+    #[test]
+    fn test_podman_runtime_debug() {
+        assert_eq!(format!("{:?}", PodmanRuntime::new()), "PodmanRuntime");
+    }
+
+    #[test]
+    fn test_container_info_debug() {
+        let info = ContainerInfo {
+            id: "x".to_string(),
+            name: "n".to_string(),
+            image: "i".to_string(),
+            status: "s".to_string(),
+            created: "c".to_string(),
+        };
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("ContainerInfo"));
+        assert!(dbg.contains("x"));
+    }
+
+    #[test]
+    fn test_port_mapping_clone() {
+        let p = PortMapping {
+            host_port: 80,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        let p2 = p.clone();
+        assert_eq!(p.host_port, p2.host_port);
+        assert_eq!(p.container_port, p2.container_port);
+        assert!(matches!(p2.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_volume_mapping_clone() {
+        let v = VolumeMapping {
+            host_path: "/h".to_string(),
+            container_path: "/c".to_string(),
+            read_only: true,
+        };
+        let v2 = v.clone();
+        assert_eq!(v.host_path, v2.host_path);
+        assert_eq!(v.container_path, v2.container_path);
+        assert!(v2.read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_clone() {
+        let mut env = HashMap::new();
+        env.insert("K".to_string(), "V".to_string());
+
+        let config = ContainerCreateConfig {
+            image: "alpine:latest".to_string(),
+            name: Some("cloned".to_string()),
+            env,
+            ports: vec![PortMapping {
+                host_port: 443,
+                container_port: 443,
+                protocol: Protocol::Tcp,
+            }],
+            volumes: vec![VolumeMapping {
+                host_path: "/host".to_string(),
+                container_path: "/container".to_string(),
+                read_only: false,
+            }],
+        };
+
+        let cloned = config.clone();
+        assert_eq!(config.image, cloned.image);
+        assert_eq!(config.name, cloned.name);
+        assert_eq!(config.env.get("K"), cloned.env.get("K"));
+        assert_eq!(config.ports.len(), cloned.ports.len());
+        assert_eq!(config.ports[0].host_port, cloned.ports[0].host_port);
+        assert_eq!(config.ports[0].container_port, cloned.ports[0].container_port);
+        assert!(matches!(cloned.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.volumes.len(), cloned.volumes.len());
+        assert_eq!(config.volumes[0].host_path, cloned.volumes[0].host_path);
+        assert_eq!(config.volumes[0].container_path, cloned.volumes[0].container_path);
+        assert_eq!(config.volumes[0].read_only, cloned.volumes[0].read_only);
+    }
+
+    #[test]
+    fn test_container_create_config_with_multiple_ports() {
+        let config = ContainerCreateConfig {
+            image: "nginx:latest".to_string(),
+            name: Some("multi-port".to_string()),
+            env: HashMap::new(),
+            ports: vec![
+                PortMapping {
+                    host_port: 8080,
+                    container_port: 80,
+                    protocol: Protocol::Tcp,
+                },
+                PortMapping {
+                    host_port: 8443,
+                    container_port: 443,
+                    protocol: Protocol::Tcp,
+                },
+                PortMapping {
+                    host_port: 53,
+                    container_port: 53,
+                    protocol: Protocol::Udp,
+                },
+            ],
+            volumes: vec![],
+        };
+
+        assert_eq!(config.ports.len(), 3);
+        assert_eq!(config.ports[0].host_port, 8080);
+        assert_eq!(config.ports[0].container_port, 80);
+        assert!(matches!(config.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(config.ports[1].host_port, 8443);
+        assert_eq!(config.ports[1].container_port, 443);
+        assert!(matches!(config.ports[1].protocol, Protocol::Tcp));
+        assert_eq!(config.ports[2].host_port, 53);
+        assert_eq!(config.ports[2].container_port, 53);
+        assert!(matches!(config.ports[2].protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_container_create_config_with_multiple_volumes() {
+        let config = ContainerCreateConfig {
+            image: "postgres:15".to_string(),
+            name: Some("db".to_string()),
+            env: HashMap::new(),
+            ports: vec![],
+            volumes: vec![
+                VolumeMapping {
+                    host_path: "/data".to_string(),
+                    container_path: "/var/lib/postgresql/data".to_string(),
+                    read_only: false,
+                },
+                VolumeMapping {
+                    host_path: "/etc/config".to_string(),
+                    container_path: "/etc/app".to_string(),
+                    read_only: true,
+                },
+            ],
+        };
+
+        assert_eq!(config.volumes.len(), 2);
+        assert_eq!(config.volumes[0].host_path, "/data");
+        assert_eq!(config.volumes[0].container_path, "/var/lib/postgresql/data");
+        assert!(!config.volumes[0].read_only);
+        assert_eq!(config.volumes[1].host_path, "/etc/config");
+        assert_eq!(config.volumes[1].container_path, "/etc/app");
+        assert!(config.volumes[1].read_only);
+    }
+
+    #[test]
+    fn test_protocol_two_vars_remain_equal() {
+        let a = Protocol::Tcp;
+        let b = a;
+        assert!(matches!(a, Protocol::Tcp));
+        assert!(matches!(b, Protocol::Tcp));
+
+        let c = Protocol::Udp;
+        let d = c;
+        assert!(matches!(c, Protocol::Udp));
+        assert!(matches!(d, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_port_mapping_docker_port_range() {
+        let mapping = PortMapping {
+            host_port: 0,
+            container_port: 65535,
+            protocol: Protocol::Udp,
+        };
+        assert_eq!(mapping.host_port, 0);
+        assert_eq!(mapping.container_port, 65535);
+        assert!(matches!(mapping.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_with_empty_paths() {
+        let v = VolumeMapping {
+            host_path: "".to_string(),
+            container_path: "".to_string(),
+            read_only: false,
+        };
+        assert_eq!(v.host_path, "");
+        assert_eq!(v.container_path, "");
+        assert!(!v.read_only);
+    }
 }

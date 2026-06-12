@@ -511,6 +511,55 @@ mod tests {
         Ok((temp_dir, adapter))
     }
 
+    /// Create a temp git repo with one initial commit on the `main` branch.
+    ///
+    /// The default [`create_test_repo`] leaves HEAD unborn, which causes
+    /// many `VcsPlugin` operations (`create_branch`, `create_worktree`,
+    /// `detect_conflicts`, …) to fail because there is no commit to
+    /// branch off of. This helper is used by the worktree / branch /
+    /// conflict tests that need a valid starting point.
+    fn create_test_repo_with_commit() -> PluginResult<(TempDir, GitAdapter)> {
+        let (temp_dir, adapter) = create_test_repo()?;
+        let repo = Repository::open(adapter.repo_path()).map_err(git_err)?;
+
+        // Local git identity so signatures are valid.
+        let mut config = repo.config().map_err(git_err)?;
+        config
+            .set_str("user.name", "Test User")
+            .map_err(git_err)?;
+        config
+            .set_str("user.email", "test@example.com")
+            .map_err(git_err)?;
+
+        // Stage a single file so the initial commit has a non-empty tree.
+        let readme_path = adapter.repo_path().join("README.md");
+        std::fs::write(&readme_path, b"# Test Repo\n").map_err(|e| PluginError::Io(e))?;
+        let mut index = repo.index().map_err(git_err)?;
+        index.add_path(Path::new("README.md")).map_err(git_err)?;
+        index.write().map_err(git_err)?;
+
+        let tree_oid = index.write_tree().map_err(git_err)?;
+        let tree = repo.find_tree(tree_oid).map_err(git_err)?;
+        let sig = repo.signature().map_err(git_err)?;
+
+        // Initial commit. This resolves the (currently unborn) HEAD and
+        // creates refs/heads/<default> at the new commit.
+        let commit_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[])
+            .map_err(git_err)?;
+        let commit = repo.find_commit(commit_oid).map_err(git_err)?;
+
+        // Ensure a local "main" branch exists regardless of the host
+        // git's `init.defaultBranch` setting so downstream code that
+        // asks for "main" can find it deterministically.
+        if repo.find_branch("main", BranchType::Local).is_err() {
+            repo.branch("main", &commit, true).map_err(git_err)?;
+        }
+        repo.set_head("refs/heads/main").map_err(git_err)?;
+
+        Ok((temp_dir, adapter))
+    }
+
     #[tokio::test]
     async fn test_adapter_name_and_version() -> PluginResult<()> {
         let (_dir, adapter) = create_test_repo()?;
@@ -695,5 +744,247 @@ mod tests {
         );
         // Sanity-check: the freshly-init'd repo is a directory, not a file.
         assert!(repo_path.is_dir(), "repo path should be a directory");
+    }
+
+    #[test]
+    fn test_git_adapter_repo_path_accessor() {
+        // `repo_path()` should return the path that was passed to `new`.
+        let (dir, adapter) = create_test_repo().expect("test repo should init");
+        assert_eq!(
+            adapter.repo_path(),
+            dir.path(),
+            "repo_path() should expose the temp dir"
+        );
+    }
+
+    #[test]
+    #[ignore = "Racy with other tests that may change cwd; run with --ignored explicitly"]
+    fn test_git_adapter_from_cwd() {
+        // `from_cwd()` must open the repo at the process's current
+        // working directory. We capture the original cwd up front,
+        // switch to the temp dir, and restore cwd on the way out via
+        // a `Drop` guard (so a panic in `from_cwd` or the assertion
+        // still leaves the process in its original cwd).
+        //
+        // The test is `#[ignore]` because changing the process cwd
+        // is a global side-effect that races with other cargo tests
+        // running in parallel; run it alone via
+        // `cargo test -- --ignored test_git_adapter_from_cwd` to
+        // exercise it deterministically.
+        let (dir, _adapter) = create_test_repo().expect("test repo should init");
+        let original_cwd = std::env::current_dir().expect("should read cwd");
+
+        struct CwdGuard(std::path::PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let _guard = CwdGuard(original_cwd);
+
+        std::env::set_current_dir(dir.path()).expect("should chdir to temp dir");
+        let adapter = GitAdapter::from_cwd().expect("from_cwd should succeed");
+        assert_eq!(
+            adapter.repo_path(),
+            dir.path(),
+            "from_cwd() adapter should point at the cwd we set"
+        );
+    }
+
+    #[test]
+    fn test_git_adapter_new_invalid_path_returns_not_found() {
+        // Opening a non-existent path must surface as `PluginError::NotFound`
+        // (the `git_err` helper maps `git2::ErrorCode::NotFound` to it).
+        let result = GitAdapter::new("/this/definitely/does/not/exist/xyz_42");
+        match result {
+            Err(PluginError::NotFound(_)) => {}
+            Err(other) => panic!("expected PluginError::NotFound, got: {:?}", other),
+            Ok(_) => panic!("expected PluginError::NotFound, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_branch_and_list() {
+        let (_dir, adapter) =
+            create_test_repo_with_commit().expect("repo with commit should init");
+
+        // `create_branch` is the simple sanity check.
+        adapter
+            .create_branch("feature-x", "main")
+            .await
+            .expect("create_branch should succeed against an existing 'main'");
+
+        // No worktrees registered, so `list_worktrees` should be empty.
+        let worktrees = adapter
+            .list_worktrees()
+            .await
+            .expect("list_worktrees should succeed");
+        assert!(
+            worktrees.is_empty(),
+            "list_worktrees should be empty when none exist, got: {:?}",
+            worktrees
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_and_cleanup_worktree() {
+        // NOTE: As of this writing the production `create_worktree`
+        // implementation in this crate has a cross-repo bug: it
+        // constructs `wt_repo` via `Repository::init(&worktree_path)`
+        // and then tries to create the branch on it using a `Commit`
+        // borrowed from the *parent* repo. libgit2 rejects this with
+        // `git_commit_owner(commit) == repository`. We can't modify
+        // production code from this task, so the test exercises the
+        // function and asserts (a) that it returns `Err` (the bug),
+        // (b) that the worktree path is still created on disk as a
+        // side effect (the `create_dir_all` happens *before* the
+        // failing `wt_repo.branch(...)` call), and (c) that
+        // `cleanup_worktree` succeeds and removes that path.
+        let (_dir, adapter) =
+            create_test_repo_with_commit().expect("repo with commit should init");
+
+        let result = adapter
+            .create_worktree("test-feature", "WP1")
+            .await;
+        assert!(
+            result.is_err(),
+            "create_worktree should error (cross-repo bug): {:?}",
+            result
+        );
+        let err = result.err().expect("err variant");
+        assert!(
+            matches!(err, PluginError::Operation(_)),
+            "expected PluginError::Operation, got: {:?}",
+            err
+        );
+
+        // The worktree directory is still created on disk because
+        // `create_dir_all` runs before the failing branch call.
+        let wt_path = adapter.repo_path().join(".worktrees").join("WP1");
+        assert!(
+            wt_path.exists(),
+            "worktree path should be created as a side effect: {:?}",
+            wt_path
+        );
+        assert!(
+            wt_path.is_dir(),
+            "worktree path should be a directory: {:?}",
+            wt_path
+        );
+
+        adapter
+            .cleanup_worktree(&wt_path)
+            .await
+            .expect("cleanup_worktree should succeed");
+
+        assert!(
+            !wt_path.exists(),
+            "cleanup_worktree should have removed the directory: {:?}",
+            wt_path
+        );
+    }
+
+    #[tokio::test]
+    async fn test_artifact_exists_for_missing_file() {
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let exists = adapter
+            .artifact_exists("nope-feature", "missing.txt")
+            .await
+            .expect("artifact_exists should not error on missing file");
+        assert!(
+            !exists,
+            "artifact_exists should return false for a non-existent artifact"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_artifact_for_missing_file() {
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let result = adapter
+            .read_artifact("nope-feature", "missing.txt")
+            .await;
+        match result {
+            Err(PluginError::NotFound(_)) => {}
+            Err(other) => panic!("expected PluginError::NotFound, got: {:?}", other),
+            Ok(content) => panic!("expected PluginError::NotFound, got Ok({:?})", content),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scan_feature_artifacts_empty() {
+        // No `kitty-specs/nope-feature/` directory exists, so the
+        // production code at lines 464-470 short-circuits with empty
+        // artifacts. Verify that contract.
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let artifacts = adapter
+            .scan_feature_artifacts("nope-feature")
+            .await
+            .expect("scan should succeed on a missing feature dir");
+        assert!(
+            artifacts.meta_json.is_none(),
+            "meta_json should be None for a missing feature dir, got: {:?}",
+            artifacts.meta_json
+        );
+        assert!(
+            artifacts.audit_chain.is_none(),
+            "audit_chain should be None for a missing feature dir, got: {:?}",
+            artifacts.audit_chain
+        );
+        assert!(
+            artifacts.evidence_paths.is_empty(),
+            "evidence_paths should be empty for a missing feature dir, got: {:?}",
+            artifacts.evidence_paths
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scan_feature_artifacts_with_meta() {
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        adapter
+            .write_artifact("test-feat", "meta.json", r#"{"feature":"x"}"#)
+            .await
+            .expect("write_artifact should succeed");
+
+        let artifacts = adapter
+            .scan_feature_artifacts("test-feat")
+            .await
+            .expect("scan should succeed");
+
+        let meta = artifacts
+            .meta_json
+            .as_deref()
+            .expect("meta_json should be Some when meta.json exists");
+        assert!(
+            meta.contains("meta.json"),
+            "meta_json path should reference meta.json, got: {}",
+            meta
+        );
+        assert!(
+            artifacts.audit_chain.is_none(),
+            "audit_chain should be None without an audit dir, got: {:?}",
+            artifacts.audit_chain
+        );
+        assert!(
+            artifacts.evidence_paths.is_empty(),
+            "evidence_paths should be empty without an audit dir, got: {:?}",
+            artifacts.evidence_paths
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_conflicts_no_diff() {
+        // A branch compared against itself must produce an empty diff.
+        let (_dir, adapter) =
+            create_test_repo_with_commit().expect("repo with commit should init");
+
+        let conflicts = adapter
+            .detect_conflicts("main", "main")
+            .await
+            .expect("detect_conflicts should succeed against a real 'main' branch");
+        assert!(
+            conflicts.is_empty(),
+            "same-branch diff should produce no conflicts, got: {:?}",
+            conflicts
+        );
     }
 }
