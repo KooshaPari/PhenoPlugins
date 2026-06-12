@@ -1093,4 +1093,109 @@ mod tests {
             );
         });
     }
+
+    // -- PluginError Display / Debug coverage --
+    //
+    // The pheno-plugin-core PluginError enum (see
+    // crates/pheno-plugin-core/src/error.rs:6) has these string-bearing
+    // variants: Initialization, NotFound, AlreadyRegistered, AlreadyExists,
+    // Operation, Config, Execution, Validation. The following tests pin the
+    // Display impl for three of them, and the Debug impl for one, by
+    // asserting the inner payload round-trips through `{}` / `{:?}`.
+
+    #[test]
+    fn test_plugin_error_not_found_display() {
+        // PluginError::NotFound is declared with `#[error("Plugin `{0}` not
+        // found in registry")]` (error.rs:11), so Display must include both
+        // the variant's keyword ("not found") and the inner payload.
+        let e = PluginError::NotFound("feature".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("feature"),
+            "NotFound Display should contain payload `feature`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_serialization_display() {
+        // PluginError::Serialization is declared as
+        // `Serialization(#[from] serde_json::Error)` (error.rs:30), so it
+        // cannot be constructed with a plain String. The proper way to
+        // exercise the variant is to coerce a real serde_json::Error via
+        // the `#[from]` blanket into PluginError::Serialization. We then
+        // assert that the resulting PluginError::Serialization's Display
+        // output (a) is non-empty and (b) embeds the inner serde error's
+        // own Display text — this is the only stable guarantee we can
+        // make about what `{}` of this variant produces, since serde
+        // does not echo the offending input back through its error.
+        let bad_json: serde_json::Error =
+            serde_json::from_str::<i32>("{ not valid json").unwrap_err();
+        let inner_text = bad_json.to_string();
+        let e: PluginError = bad_json.into();
+        let displayed = format!("{}", e);
+        assert!(
+            !displayed.is_empty(),
+            "Serialization Display should not be empty"
+        );
+        assert!(
+            displayed.contains(&inner_text),
+            "Serialization Display should embed inner serde error text `{}`, got: `{}`",
+            inner_text,
+            displayed
+        );
+        // Sanity: the variant name "Serialization" is part of the
+        // `#[error("Serialization error: {0}")]` format string
+        // (error.rs:29), so it must appear in Display.
+        assert!(
+            displayed.contains("Serialization"),
+            "Serialization Display should contain variant keyword `Serialization`, got: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_validation_display() {
+        // PluginError::Validation is declared with
+        // `#[error("Validation error: {0}")]` (error.rs:36). This is the
+        // variant lib.rs:163, lib.rs:167, lib.rs:281, lib.rs:285, and
+        // lib.rs:351 raise for missing/malformed input fields.
+        let e = PluginError::Validation("missing field".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("missing field"),
+            "Validation Display should contain payload `missing field`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_operation_display() {
+        // PluginError::Operation is declared with
+        // `#[error("Operation failed: {0}")]` (error.rs:21). lib.rs uses
+        // this for every rusqlite failure on INSERT/UPDATE/SELECT
+        // (lib.rs:178, lib.rs:245, lib.rs:300, lib.rs:340, lib.rs:366).
+        let e = PluginError::Operation("conflict".to_string());
+        let displayed = format!("{}", e);
+        assert!(
+            displayed.contains("conflict"),
+            "Operation Display should contain payload `conflict`: `{}`",
+            displayed
+        );
+    }
+
+    #[test]
+    fn test_plugin_error_debug_includes_variant() {
+        // Debug for an enum-typed error must include the variant name.
+        // PluginError derives Debug (error.rs:6), so `{:?}` of
+        // `PluginError::NotFound(...)` should contain the substring
+        // "NotFound".
+        let e = PluginError::NotFound("x".to_string());
+        let debugged = format!("{:?}", e);
+        assert!(
+            debugged.contains("NotFound"),
+            "Debug for PluginError::NotFound should contain `NotFound`: `{}`",
+            debugged
+        );
+    }
 }
