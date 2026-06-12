@@ -244,4 +244,138 @@ mod tests {
             _ => unreachable!("expected Container variants"),
         }
     }
+
+    #[test]
+    fn test_module_declarations_exist() {
+        // Compile-time check: all 5 submodules are accessible and contain real types.
+        let _: &str = "ok";
+
+        // client module: ContainerClient is generic over ContainerRuntime.
+        let _ = client::ContainerClient::<DockerRuntime>::new(DockerRuntime);
+
+        // compose module: ComposeService derives Default (ComposeFile does not).
+        let _ = compose::ComposeService::default();
+
+        // container module: ContainerStatus is an enum with unit variants.
+        let _ = container::ContainerStatus::Created;
+
+        // image module: Image has a public constructor.
+        let _ = image::Image::new("x");
+
+        // runtime module: Protocol is a public enum.
+        let _ = runtime::Protocol::Tcp;
+    }
+
+    #[test]
+    fn test_vessel_error_debug_format() {
+        // For each VesselError variant, format!("{:?}", err) must contain the
+        // variant name and the inner payload string (or inner error message for Io).
+
+        let c_err = ContainerError::NotFound("web".to_string());
+        let err: VesselError = c_err.into();
+        let s = format!("{:?}", err);
+        assert!(s.contains("Container"), "expected 'Container' in Debug '{}'", s);
+        assert!(s.contains("NotFound"), "expected 'NotFound' in Debug '{}'", s);
+        assert!(s.contains("web"), "expected inner 'web' in Debug '{}'", s);
+
+        let err = VesselError::ImagePullFailed("nginx".to_string());
+        let s = format!("{:?}", err);
+        assert!(
+            s.contains("ImagePullFailed"),
+            "expected 'ImagePullFailed' in Debug '{}'",
+            s
+        );
+        assert!(s.contains("nginx"), "expected inner 'nginx' in Debug '{}'", s);
+
+        let err = VesselError::Runtime("daemon down".to_string());
+        let s = format!("{:?}", err);
+        assert!(s.contains("Runtime"), "expected 'Runtime' in Debug '{}'", s);
+        assert!(
+            s.contains("daemon down"),
+            "expected inner 'daemon down' in Debug '{}'",
+            s
+        );
+
+        let err = VesselError::Network("timeout".to_string());
+        let s = format!("{:?}", err);
+        assert!(s.contains("Network"), "expected 'Network' in Debug '{}'", s);
+        assert!(s.contains("timeout"), "expected inner 'timeout' in Debug '{}'", s);
+
+        let io_err = std::io::Error::other("disk gone");
+        let err = VesselError::Io(io_err);
+        let s = format!("{:?}", err);
+        assert!(s.contains("Io"), "expected 'Io' in Debug '{}'", s);
+        assert!(
+            s.contains("disk gone"),
+            "expected inner 'disk gone' in Debug '{}'",
+            s
+        );
+    }
+
+    #[test]
+    fn test_vessel_error_io_from_real_io_error() {
+        // From<std::io::Error> should preserve the ErrorKind.
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let v: VesselError = io_err.into();
+        match v {
+            VesselError::Io(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+            other => panic!("expected VesselError::Io, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_vessel_error_source_chain_through_box() {
+        // VesselError does NOT derive Clone (only Debug + Error), so we
+        // cannot .clone() the error directly. This test replaces the
+        // originally-proposed Clone check with a check that the error
+        // source chain is preserved when the error is boxed as
+        // Box<dyn std::error::Error> — a common real-world use case.
+        use std::error::Error;
+
+        // Io variant: source should be the original std::io::Error.
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io msg");
+        let v: VesselError = io_err.into();
+        let boxed: Box<dyn Error> = Box::new(v);
+        let source = boxed
+            .source()
+            .expect("VesselError::Io should expose source through Box<dyn Error>");
+        let downcast = source
+            .downcast_ref::<std::io::Error>()
+            .expect("source should be std::io::Error");
+        assert_eq!(downcast.kind(), std::io::ErrorKind::Other);
+
+        // Container variant: source should be the original ContainerError.
+        let c_err = ContainerError::OperationFailed("op failed".to_string());
+        let v: VesselError = c_err.into();
+        let boxed: Box<dyn Error> = Box::new(v);
+        let source = boxed
+            .source()
+            .expect("VesselError::Container should expose source through Box<dyn Error>");
+        let downcast = source
+            .downcast_ref::<ContainerError>()
+            .expect("source should be ContainerError");
+        assert!(matches!(downcast, ContainerError::OperationFailed(_)));
+    }
+
+    #[test]
+    fn test_podman_runtime_re_exported() {
+        // Verifies the `pub use runtime::PodmanRuntime` re-export works
+        // and that PodmanRuntime::new() + name() behave as expected.
+        let p = PodmanRuntime::new();
+        assert_eq!(p.name(), "podman");
+    }
+
+    #[test]
+    fn test_image_pull_progress_re_exported() {
+        // Verifies the `pub use image::ImagePullProgress` re-export works
+        // and that the struct fields are accessible.
+        let p = ImagePullProgress {
+            status: "x".into(),
+            progress: None,
+            speed: None,
+        };
+        assert_eq!(p.status, "x");
+        assert!(p.progress.is_none());
+        assert!(p.speed.is_none());
+    }
 }

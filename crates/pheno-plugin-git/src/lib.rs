@@ -80,7 +80,7 @@ impl GitAdapter {
         let name = if head.is_branch() {
             head.name()
                 .map(|n| n.strip_prefix("refs/heads/").unwrap_or(n).to_string())
-                .unwrap_or_else(|| "main".to_string())
+                .unwrap_or_else(|_| "main".to_string())
         } else {
             "main".to_string()
         };
@@ -155,8 +155,9 @@ impl VcsPlugin for GitAdapter {
 
         for name_bytes in names.iter() {
             let name = match name_bytes {
-                Some(n) => n,
-                None => continue,
+                Ok(Some(n)) => n,
+                Ok(None) => continue,
+                Err(_) => continue,
             };
 
             let wt = match repo.find_worktree(name) {
@@ -187,7 +188,7 @@ impl VcsPlugin for GitAdapter {
                 wt_repo
                     .head()
                     .ok()
-                    .and_then(|h| h.shorthand().map(String::from))
+                    .and_then(|h| h.shorthand().ok().map(String::from))
                     .unwrap_or_else(|| name_str.clone())
             } else {
                 name_str.clone()
@@ -215,8 +216,9 @@ impl VcsPlugin for GitAdapter {
         let mut found_name: Option<String> = None;
         for name_bytes in names.iter() {
             let name = match name_bytes {
-                Some(n) => n,
-                None => continue,
+                Ok(Some(n)) => n,
+                Ok(None) => continue,
+                Err(_) => continue,
             };
             if let Ok(wt) = repo.find_worktree(name) {
                 let wt_path = PathBuf::from(wt.path());
@@ -531,5 +533,167 @@ mod tests {
         assert_eq!(content, "Hello, World!");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_git_plugin_name() {
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let name = adapter.name();
+        assert!(!name.is_empty(), "plugin name should not be empty");
+        assert!(
+            name.contains("git"),
+            "plugin name should contain 'git': `{}`",
+            name
+        );
+        // Concrete value: the adapter explicitly registers itself as "git".
+        assert_eq!(name, "git");
+    }
+
+    #[test]
+    fn test_git_plugin_version() {
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let version = adapter.version();
+        assert!(!version.is_empty(), "plugin version should not be empty");
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_git_plugin_adapter_trait_identity() {
+        // Compile-time check: GitAdapter must satisfy the AdapterPlugin trait.
+        // Assigning to `&dyn AdapterPlugin` is the canonical way to force the
+        // compiler to resolve the trait. If the impl drifts, this won't compile.
+        let (_dir, adapter) = create_test_repo().expect("test repo should init");
+        let _plugin: &dyn AdapterPlugin = &adapter;
+
+        // Also exercise the trait's default `health_check` to confirm dispatch
+        // works through the trait object (not just inherent methods).
+        let plugin_ref: &dyn AdapterPlugin = &adapter;
+        assert!(
+            plugin_ref.health_check().is_ok(),
+            "default AdapterPlugin::health_check should return Ok"
+        );
+    }
+
+    #[test]
+    fn test_git_error_display() {
+        // The git adapter does not define a local `GitError` type; it maps
+        // git2 errors to `PluginError` variants via the `git_err` helper.
+        // Verify every string-bearing variant produces a non-empty Display
+        // that includes the inner payload.
+        let cases: Vec<(PluginError, &str)> = vec![
+            (
+                PluginError::Initialization("init_payload".to_string()),
+                "init_payload",
+            ),
+            (
+                PluginError::NotFound("notfound_payload".to_string()),
+                "notfound_payload",
+            ),
+            (
+                PluginError::AlreadyRegistered("reg_payload".to_string()),
+                "reg_payload",
+            ),
+            (
+                PluginError::AlreadyExists("exists_payload".to_string()),
+                "exists_payload",
+            ),
+            (
+                PluginError::Operation("op_payload".to_string()),
+                "op_payload",
+            ),
+            (PluginError::Config("cfg_payload".to_string()), "cfg_payload"),
+            (
+                PluginError::Execution("exec_payload".to_string()),
+                "exec_payload",
+            ),
+            (
+                PluginError::Validation("val_payload".to_string()),
+                "val_payload",
+            ),
+        ];
+
+        for (err, payload) in cases {
+            let displayed = err.to_string();
+            assert!(
+                !displayed.is_empty(),
+                "Display for PluginError should not be empty: {:?}",
+                err
+            );
+            assert!(
+                displayed.contains(payload),
+                "Display for PluginError missing payload `{}`: `{}`",
+                payload,
+                displayed
+            );
+        }
+
+        // `#[from]` variants: exercise the From conversion and verify Display
+        // is non-empty and preserves the inner error's text.
+        let io_err: PluginError =
+            std::io::Error::new(std::io::ErrorKind::NotFound, "io_inner_text").into();
+        let io_displayed = io_err.to_string();
+        assert!(!io_displayed.is_empty(), "Io Display should not be empty");
+        assert!(
+            io_displayed.contains("io_inner_text"),
+            "Io Display should contain inner text: `{}`",
+            io_displayed
+        );
+
+        let bad_json: serde_json::Error =
+            serde_json::from_str::<i32>("{ not valid json").unwrap_err();
+        let ser_err: PluginError = bad_json.into();
+        let ser_displayed = ser_err.to_string();
+        assert!(
+            !ser_displayed.is_empty(),
+            "Serialization Display should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_git_error_from() {
+        // `From<git2::Error>` is NOT implemented for `PluginError` in this
+        // crate. The adapter instead routes every git2 error through the
+        // private `git_err` helper. Verify the public error contract:
+        // constructing a GitAdapter against a non-existent path must fail
+        // with a `PluginError` (no panic) and the error must round-trip
+        // through Display.
+        let bogus = std::path::Path::new("/this/path/does/not/exist/at/all/xyzzy_42");
+        let result = GitAdapter::new(bogus);
+        assert!(
+            result.is_err(),
+            "opening a non-existent repository path should return Err"
+        );
+        let err = result.err().expect("expected error variant");
+        let displayed = err.to_string();
+        assert!(
+            !displayed.is_empty(),
+            "PluginError Display for git2 mapping should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_git_plugin_creation_in_temp_dir() {
+        // Build a brand-new TempDir, initialize a real git repository inside
+        // it with `git2::Repository::init`, and verify that GitAdapter::new
+        // accepts the freshly-initialized repo. The TempDir is held until
+        // the end of the test so cleanup happens automatically.
+        let temp_dir = TempDir::new().expect("temp dir should be created");
+        let repo_path = temp_dir.path();
+        let init_result = Repository::init(repo_path);
+        assert!(
+            init_result.is_ok(),
+            "Repository::init should succeed on a fresh temp dir: {:?}",
+            init_result.err()
+        );
+
+        let adapter = GitAdapter::new(repo_path)
+            .expect("GitAdapter::new should accept a freshly-initialized repo");
+        assert_eq!(
+            adapter.repo_path(),
+            repo_path,
+            "adapter should expose the path it was constructed with"
+        );
+        // Sanity-check: the freshly-init'd repo is a directory, not a file.
+        assert!(repo_path.is_dir(), "repo path should be a directory");
     }
 }
