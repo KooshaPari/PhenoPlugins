@@ -135,6 +135,7 @@ mod tests {
     use crate::runtime::{ContainerCreateConfig, ContainerInfo, DockerRuntime};
     use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     /// MockRuntime: a configurable test double for `ContainerRuntime`.
     ///
@@ -154,6 +155,7 @@ mod tests {
         remove_container_result: Result<(), String>,
         logs_result: Result<String, String>,
         available: bool,
+        removed_images: Mutex<Vec<String>>,
     }
 
     impl MockRuntime {
@@ -173,6 +175,7 @@ mod tests {
                 remove_container_result: Ok(()),
                 logs_result: Ok("mock log output".to_string()),
                 available: true,
+            removed_images: Mutex::new(Vec::new()),
             }
         }
 
@@ -210,6 +213,18 @@ mod tests {
             self.logs_result = r;
             self
         }
+
+        fn with_available(mut self, b: bool) -> Self {
+            self.available = b;
+            self
+        }
+
+        /// Returns a snapshot of the image names that have been passed
+        /// to `remove_image` on this runtime. Used by tests to verify
+        /// the client propagated the call.
+        fn list_removed_images(&self) -> Vec<String> {
+            self.removed_images.lock().expect("removed_images mutex poisoned").clone()
+        }
     }
 
     #[async_trait]
@@ -230,7 +245,11 @@ mod tests {
             self.pull_result.clone()
         }
 
-        async fn remove_image(&self, _image: &str) -> Result<(), String> {
+        async fn remove_image(&self, image: &str) -> Result<(), String> {
+            self.removed_images
+                .lock()
+                .expect("removed_images mutex poisoned")
+                .push(image.to_string());
             self.remove_image_result.clone()
         }
 
@@ -616,5 +635,234 @@ mod tests {
             Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
             Ok(_) => panic!("expected error, got Ok"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_client_is_available_returns_false() {
+        // Build a mock whose runtime reports itself as unavailable.
+        let mock = MockRuntime::new("test", Ok(vec![])).with_available(false);
+        let client = ContainerClient::new(mock);
+
+        let available = client.is_available().await;
+        assert!(
+            !available,
+            "is_available should propagate the runtime's `false` to the client"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_client_list_containers_empty() {
+        // MockRuntime::list_containers returns Ok(vec![]); the client
+        // must surface that as Ok(empty Vec) without mutation.
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        let client = ContainerClient::new(mock);
+
+        let result = client
+            .list_containers()
+            .await
+            .expect("list_containers should succeed");
+
+        assert!(
+            result.is_empty(),
+            "expected empty container list, got {:?}",
+            result
+        );
+        assert_eq!(result.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_client_pull_image_with_complex_name() {
+        // The image name "docker.io/library/nginx:1.25-alpine" carries a
+        // registry prefix, a library path, and a versioned tag. The
+        // client's pull_image must preserve the entire string as the
+        // Image id (it is just echoed back from the input ref).
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        let client = ContainerClient::new(mock);
+
+        let image = client
+            .pull_image("docker.io/library/nginx:1.25-alpine")
+            .await
+            .expect("pull_image should succeed");
+
+        assert_eq!(image.id, "docker.io/library/nginx:1.25-alpine");
+        assert_eq!(image.name, "docker.io/library/nginx:1.25-alpine");
+    }
+
+    #[tokio::test]
+    async fn test_client_run_start_failure() {
+        // Create succeeds with "id-ok", but start fails. The error from
+        // start_container must propagate as VesselError::Runtime, not
+        // be swallowed by the successful create step.
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_create_result(Ok("id-ok".to_string()))
+            .with_start_result(Err("start failed".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let result = client.run("nginx:1.25", "web").await;
+        match result {
+            Err(VesselError::Runtime(s)) => assert_eq!(s, "start failed"),
+            Err(other) => panic!("expected VesselError::Runtime, got {:?}", other),
+            Ok(_) => panic!("expected error from start_container, got Ok"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_client_create_uses_image_id_as_container_id_when_create_returns_id() {
+        // The client's `create` method should set the resulting
+        // Container's id to whatever the runtime's create_container
+        // returns (i.e., the runtime's id, not the image name).
+        let mock = MockRuntime::new("test", Ok(vec![]))
+            .with_create_result(Ok("rt-generated-id".to_string()));
+        let client = ContainerClient::new(mock);
+
+        let container = client
+            .create("nginx:1.25", "web")
+            .await
+            .expect("create should succeed");
+
+        assert_eq!(container.id, "rt-generated-id");
+        assert_eq!(container.name, "web");
+        assert_eq!(container.image, "nginx:1.25");
+        assert_eq!(container.status, ContainerStatus::Created);
+    }
+
+    #[tokio::test]
+    async fn test_mock_runtime_can_be_built_for_each_method_independently() {
+        // Build a MockRuntime with a unique per-method result, then
+        // exercise every trait method and verify each one returns its
+        // own configured value (and not, e.g., a default from some
+        // other method). Covers all 10 trait methods: name, is_available,
+        // list_containers, pull_image, remove_image, create_container,
+        // start_container, stop_container, remove_container, logs.
+        let mock = MockRuntime::new(
+            "custom-name",
+            Ok(vec![ContainerInfo {
+                id: "default-list-id".to_string(),
+                name: "default-list-name".to_string(),
+                image: "default-list-img".to_string(),
+                status: "default-list-status".to_string(),
+                created: "default-list-created".to_string(),
+            }]),
+        )
+        .with_pull_result(Ok(()))
+        .with_remove_image_result(Ok(()))
+        .with_create_result(Ok("custom-create-id".to_string()))
+        .with_start_result(Ok(()))
+        .with_stop_result(Ok(()))
+        .with_remove_container_result(Ok(()))
+        .with_logs_result(Ok("custom-log-output".to_string()))
+        .with_available(false);
+
+        let client = ContainerClient::new(mock);
+
+        // name() — sync method on the trait.
+        assert_eq!(client.runtime_name(), "custom-name");
+
+        // is_available — async method returning bool.
+        assert!(
+            !client.is_available().await,
+            "is_available should be the configured false"
+        );
+
+        // list_containers — must return the configured ContainerInfo.
+        let list = client
+            .list_containers()
+            .await
+            .expect("list should succeed");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "default-list-id");
+        assert_eq!(list[0].name, "default-list-name");
+        assert_eq!(list[0].image, "default-list-img");
+        assert_eq!(list[0].status, "default-list-status");
+        assert_eq!(list[0].created, "default-list-created");
+
+        // pull_image — the returned Image id/name come from the input ref.
+        let image = client
+            .pull_image("custom-img:1.0")
+            .await
+            .expect("pull should succeed");
+        assert_eq!(image.id, "custom-img:1.0");
+        assert_eq!(image.name, "custom-img:1.0");
+        assert_eq!(image.tag, "latest");
+
+        // remove_image — the runtime should record the call.
+        client
+            .remove_image("custom-img:1.0")
+            .await
+            .expect("remove_image should succeed");
+        let removed = client.runtime.list_removed_images();
+        assert!(
+            removed.contains(&"custom-img:1.0".to_string()),
+            "expected runtime to record removal of 'custom-img:1.0', got {:?}",
+            removed
+        );
+
+        // run() exercises create_container + start_container; verify
+        // the runtime-generated id propagates into the Container.
+        let container = client
+            .run("custom-img:1.0", "custom-name")
+            .await
+            .expect("run should succeed");
+        assert_eq!(container.id, "custom-create-id");
+        assert_eq!(container.name, "custom-name");
+        assert_eq!(container.image, "custom-img:1.0");
+        assert_eq!(container.status, ContainerStatus::Running);
+
+        // start/stop/rm/logs — verify each returns its configured value.
+        client
+            .start("custom-create-id")
+            .await
+            .expect("start should succeed");
+        client
+            .stop("custom-create-id")
+            .await
+            .expect("stop should succeed");
+        client
+            .rm("custom-create-id")
+            .await
+            .expect("rm should succeed");
+        let logs = client
+            .logs("custom-create-id")
+            .await
+            .expect("logs should succeed");
+        assert_eq!(logs, "custom-log-output");
+    }
+
+    #[tokio::test]
+    async fn test_client_pull_image_preserves_image_id_field() {
+        // The image id field on the returned Image must be exactly the
+        // string the user requested pulled.
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        let client = ContainerClient::new(mock);
+
+        let image = client
+            .pull_image("myimage:1.0")
+            .await
+            .expect("pull_image should succeed");
+
+        assert_eq!(image.id, "myimage:1.0");
+    }
+
+    #[tokio::test]
+    async fn test_client_remove_image_with_image_name() {
+        // remove_image should pass the requested image name to the
+        // runtime, and the runtime should record that it was called
+        // with that exact name.
+        let mock = MockRuntime::new("test", Ok(vec![]));
+        let client = ContainerClient::new(mock);
+
+        client
+            .remove_image("nginx:1.25")
+            .await
+            .expect("remove_image should succeed");
+
+        // The runtime's recorded list of removed image names should
+        // contain the name we just passed in.
+        let removed = client.runtime.list_removed_images();
+        assert!(
+            removed.contains(&"nginx:1.25".to_string()),
+            "expected runtime to record removal of 'nginx:1.25', got {:?}",
+            removed
+        );
     }
 }

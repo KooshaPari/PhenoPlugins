@@ -828,4 +828,235 @@ mod tests {
         assert_eq!(v.container_path, "");
         assert!(!v.read_only);
     }
+
+    #[test]
+    fn test_port_mapping_eq_with_same_fields() {
+        // PortMapping does not derive PartialEq, so compare field-by-field.
+        let a = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        let b = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        assert_eq!(a.host_port, b.host_port);
+        assert_eq!(a.container_port, b.container_port);
+        assert!(matches!(a.protocol, Protocol::Tcp));
+        assert!(matches!(b.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    #[allow(unused_assignments)]
+    fn test_port_mapping_clone_then_mutate_original() {
+        let mut original = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        let clone = original.clone();
+
+        // Mutate the original; the clone must be unaffected.
+        original.host_port = 9999;
+        original.container_port = 1234;
+
+        assert_eq!(clone.host_port, 8080);
+        assert_eq!(clone.container_port, 80);
+        assert!(matches!(clone.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_port_mapping_in_hashmap() {
+        let mut map: HashMap<String, PortMapping> = HashMap::new();
+
+        let http = PortMapping {
+            host_port: 8080,
+            container_port: 80,
+            protocol: Protocol::Tcp,
+        };
+        let dns = PortMapping {
+            host_port: 53,
+            container_port: 53,
+            protocol: Protocol::Udp,
+        };
+
+        map.insert("http".to_string(), http);
+        map.insert("dns".to_string(), dns);
+
+        assert_eq!(map.len(), 2);
+        let retrieved_http = map.get("http").expect("http mapping present");
+        assert_eq!(retrieved_http.host_port, 8080);
+        assert_eq!(retrieved_http.container_port, 80);
+        assert!(matches!(retrieved_http.protocol, Protocol::Tcp));
+
+        let retrieved_dns = map.get("dns").expect("dns mapping present");
+        assert_eq!(retrieved_dns.host_port, 53);
+        assert_eq!(retrieved_dns.container_port, 53);
+        assert!(matches!(retrieved_dns.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_port_mapping_with_max_ports() {
+        let mapping = PortMapping {
+            host_port: 65535,
+            container_port: 65535,
+            protocol: Protocol::Tcp,
+        };
+        assert_eq!(mapping.host_port, u16::MAX);
+        assert_eq!(mapping.container_port, u16::MAX);
+        assert!(matches!(mapping.protocol, Protocol::Tcp));
+    }
+
+    #[test]
+    fn test_port_mapping_with_min_ports() {
+        let mapping = PortMapping {
+            host_port: 0,
+            container_port: 0,
+            protocol: Protocol::Udp,
+        };
+        assert_eq!(mapping.host_port, 0);
+        assert_eq!(mapping.container_port, 0);
+        assert!(matches!(mapping.protocol, Protocol::Udp));
+    }
+
+    #[test]
+    fn test_volume_mapping_eq_with_same_fields() {
+        // VolumeMapping does not derive PartialEq, so compare field-by-field.
+        let a = VolumeMapping {
+            host_path: "/data".to_string(),
+            container_path: "/var/data".to_string(),
+            read_only: true,
+        };
+        let b = VolumeMapping {
+            host_path: "/data".to_string(),
+            container_path: "/var/data".to_string(),
+            read_only: true,
+        };
+        assert_eq!(a.host_path, b.host_path);
+        assert_eq!(a.container_path, b.container_path);
+        assert_eq!(a.read_only, b.read_only);
+    }
+
+    #[test]
+    #[allow(unused_assignments)]
+    fn test_volume_mapping_clone_then_mutate_original() {
+        let mut original = VolumeMapping {
+            host_path: "/data".to_string(),
+            container_path: "/var/data".to_string(),
+            read_only: true,
+        };
+        let clone = original.clone();
+
+        // Mutate the original's read_only flag; the clone must be unaffected.
+        original.read_only = false;
+        original.host_path = "/other".to_string();
+        original.container_path = "/var/other".to_string();
+
+        assert!(clone.read_only);
+        assert_eq!(clone.host_path, "/data");
+        assert_eq!(clone.container_path, "/var/data");
+    }
+
+    #[test]
+    fn test_container_create_config_with_empty_collections() {
+        let config = ContainerCreateConfig {
+            image: "scratch".to_string(),
+            name: None,
+            env: HashMap::new(),
+            ports: vec![],
+            volumes: vec![],
+        };
+        assert!(config.env.is_empty());
+        assert!(config.ports.is_empty());
+        assert!(config.volumes.is_empty());
+        assert_eq!(config.env.len(), 0);
+        assert_eq!(config.ports.len(), 0);
+        assert_eq!(config.volumes.len(), 0);
+        assert_eq!(config.image, "scratch");
+        assert!(config.name.is_none());
+    }
+
+    #[test]
+    fn test_container_create_config_clone_preserves_nested_collections() {
+        let mut env = HashMap::new();
+        env.insert("ORIGINAL".to_string(), "yes".to_string());
+
+        let mut config = ContainerCreateConfig {
+            image: "alpine:3".to_string(),
+            name: Some("nested-clone".to_string()),
+            env,
+            ports: vec![PortMapping {
+                host_port: 8000,
+                container_port: 8000,
+                protocol: Protocol::Tcp,
+            }],
+            volumes: vec![VolumeMapping {
+                host_path: "/h".to_string(),
+                container_path: "/c".to_string(),
+                read_only: false,
+            }],
+        };
+
+        let cloned = config.clone();
+
+        // Mutate the original's nested collections; the clone's must be unchanged.
+        config.env.insert("INJECTED".to_string(), "no".to_string());
+        config.ports.push(PortMapping {
+            host_port: 9000,
+            container_port: 9000,
+            protocol: Protocol::Udp,
+        });
+        config.volumes.push(VolumeMapping {
+            host_path: "/h2".to_string(),
+            container_path: "/c2".to_string(),
+            read_only: true,
+        });
+
+        // Original has the new state.
+        assert_eq!(config.env.len(), 2);
+        assert!(config.env.contains_key("INJECTED"));
+        assert_eq!(config.ports.len(), 2);
+        assert_eq!(config.volumes.len(), 2);
+
+        // Clone retains the original snapshot.
+        assert_eq!(cloned.env.len(), 1);
+        assert!(!cloned.env.contains_key("INJECTED"));
+        assert_eq!(cloned.env.get("ORIGINAL"), Some(&"yes".to_string()));
+        assert_eq!(cloned.ports.len(), 1);
+        assert_eq!(cloned.ports[0].host_port, 8000);
+        assert_eq!(cloned.ports[0].container_port, 8000);
+        assert!(matches!(cloned.ports[0].protocol, Protocol::Tcp));
+        assert_eq!(cloned.volumes.len(), 1);
+        assert_eq!(cloned.volumes[0].host_path, "/h");
+        assert_eq!(cloned.volumes[0].container_path, "/c");
+        assert!(!cloned.volumes[0].read_only);
+    }
+
+    #[test]
+    fn test_container_info_with_special_chars() {
+        let info = ContainerInfo {
+            id: "abc/def:ghi-jkl_mno.pqr".to_string(),
+            name: "weird.name_with-chars".to_string(),
+            image: "registry.example.com:5000/team/service:1.2.3-rc.4".to_string(),
+            status: "Up 2 hours".to_string(),
+            created: "2024-06-12T10:00:00Z".to_string(),
+        };
+        assert_eq!(info.id, "abc/def:ghi-jkl_mno.pqr");
+        assert_eq!(info.name, "weird.name_with-chars");
+        assert_eq!(
+            info.image,
+            "registry.example.com:5000/team/service:1.2.3-rc.4"
+        );
+        assert_eq!(info.status, "Up 2 hours");
+        assert_eq!(info.created, "2024-06-12T10:00:00Z");
+
+        // Round-trip the special chars through Clone and Debug formatting.
+        let cloned = info.clone();
+        assert_eq!(cloned.id, "abc/def:ghi-jkl_mno.pqr");
+
+        let dbg = format!("{:?}", info);
+        assert!(dbg.contains("abc/def:ghi-jkl_mno.pqr"));
+    }
 }
