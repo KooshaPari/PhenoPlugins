@@ -47,10 +47,29 @@
 //!
 //! - `runtime-tokio`: Enable async runtime support (default)
 
+//!
+//! ## Hardening
+//!
+//! - [`guardrails`] provides input validation helpers (plugin names,
+//!   semver, dependency lists).
+//! - [`manifest::PluginManifest`] is the declared contract every plugin
+//!   must satisfy.
+//! - [`capabilities::Capability`] enumerates the side-effecting surface
+//!   area a plugin may exercise.
+//! - [`lifecycle::PluginState`] tracks a plugin through its lifecycle
+//!   with strict, audited state transitions.
+
+pub mod capabilities;
 pub mod error;
+pub mod guardrails;
+pub mod lifecycle;
+pub mod manifest;
 pub mod registry;
 pub mod traits;
 
-pub use error::PluginError;
+pub use capabilities::Capability;
+pub use error::{PluginError, PluginResult};
+pub use lifecycle::PluginState;
+pub use manifest::{PluginKind, PluginManifest};
 pub use registry::PluginRegistry;
 pub use traits::{AdapterPlugin, StoragePlugin, VcsPlugin};
