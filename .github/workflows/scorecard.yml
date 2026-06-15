@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '17 3 * * 6'
 permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   analysis:
     uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@72b9c6cbdb24c49189b0e7c7395d874830d1ed87
