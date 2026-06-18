@@ -11,6 +11,6 @@ concurrency:
   cancel-in-progress: true
 jobs:
   analysis:
-    uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@72b9c6cbdb24c49189b0e7c7395d874830d1ed87
+    uses: KooshaPari/phenotype-shared/.github/workflows/reusable-scorecard.yml@55c73400a5304b4cebda56083b159b1ffec46a82
     with:
       publish_results: true
