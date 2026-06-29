@@ -176,7 +176,7 @@ fn test_capability_strings_round_trip() {
     // this pins both directions.
     for cap in Capability::ALL {
         let s = cap.as_str();
-        let parsed = Capability::from_str(s).unwrap_or_else(|| panic!("no parse for {}", s));
+        let parsed: Capability = s.parse().unwrap_or_else(|_| panic!("no parse for {}", s));
         assert_eq!(parsed, *cap);
     }
 }
@@ -200,11 +200,11 @@ fn test_capability_kind_matches_manifest() {
 }
 
 #[test]
-fn test_capability_unknown_string_returns_none() {
-    // Pin the failure mode of `from_str` for unknown identifiers.
-    assert!(Capability::from_str("nope").is_none());
-    assert!(Capability::from_str("").is_none());
-    assert!(Capability::from_str("READ").is_none()); // case-sensitive
+fn test_capability_unknown_string_returns_err() {
+    // Pin the failure mode of parsing for unknown identifiers.
+    assert!("nope".parse::<Capability>().is_err());
+    assert!("".parse::<Capability>().is_err());
+    assert!("READ".parse::<Capability>().is_err()); // case-sensitive
 }
 
 // =============================================================================

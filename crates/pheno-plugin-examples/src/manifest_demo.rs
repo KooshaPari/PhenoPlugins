@@ -7,16 +7,16 @@
 //! Run this example with `cargo run --example manifest_demo`.
 
 use pheno_plugin_core::{
-    guardrails, manifest::PluginKind, manifest::PluginManifest, Capability,
+    error::PluginResult, guardrails, manifest::PluginKind, manifest::PluginManifest,
+    Capability,
 };
 
 /// Build a manifest, validate it, and print a one-line summary.
-pub fn build_and_validate() -> Result<PluginManifest, String> {
+pub fn build_and_validate() -> PluginResult<PluginManifest> {
     // 1. Build the manifest. `PluginManifest::new` already calls
     //    `validate()` on the constructed instance, but we'll call it
     //    again at the end as a defensive check.
-    let manifest = PluginManifest::new("pheno-plugin-hello", "0.1.0", PluginKind::Generic)
-        .map_err(|e| format!("constructor failed: {}", e))?
+    let manifest = PluginManifest::new("pheno-plugin-hello", "0.1.0", PluginKind::Generic)?
         .with_description("A minimal example manifest".to_string())
         .with_capabilities(vec![
             Capability::Read,
@@ -27,17 +27,13 @@ pub fn build_and_validate() -> Result<PluginManifest, String> {
 
     // 2. Re-validate defensively. Cheap, and catches drift if the
     //    manifest is mutated between construction and registration.
-    manifest
-        .validate()
-        .map_err(|e| format!("validation failed: {}", e))?;
+    manifest.validate()?;
 
     // 3. Spot-check the guardrails independently — this is the same
     //    logic the manifest calls, but exercising it directly is a
     //    good smoke test.
-    guardrails::validate_plugin_name(&manifest.name)
-        .map_err(|e| format!("name guardrail: {}", e))?;
-    guardrails::validate_semver(&manifest.version)
-        .map_err(|e| format!("version guardrail: {}", e))?;
+    guardrails::validate_plugin_name(&manifest.name)?;
+    guardrails::validate_semver(&manifest.version)?;
 
     Ok(manifest)
 }

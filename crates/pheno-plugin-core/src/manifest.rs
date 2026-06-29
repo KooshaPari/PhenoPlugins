@@ -42,13 +42,17 @@ impl PluginKind {
         }
     }
 
-    /// Parse a plugin kind from its stable string identifier.
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for PluginKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "vcs" => Some(PluginKind::Vcs),
-            "storage" => Some(PluginKind::Storage),
-            "generic" => Some(PluginKind::Generic),
-            _ => None,
+            "vcs" => Ok(PluginKind::Vcs),
+            "storage" => Ok(PluginKind::Storage),
+            "generic" => Ok(PluginKind::Generic),
+            _ => Err(()),
         }
     }
 }
@@ -316,10 +320,10 @@ mod tests {
     fn test_plugin_kind_roundtrip() {
         for k in [PluginKind::Vcs, PluginKind::Storage, PluginKind::Generic] {
             let s = k.as_str();
-            let parsed = PluginKind::from_str(s).unwrap();
+            let parsed: PluginKind = s.parse().unwrap();
             assert_eq!(parsed, k);
         }
-        assert!(PluginKind::from_str("not-a-kind").is_none());
+        assert!("not-a-kind".parse::<PluginKind>().is_err());
     }
 
     #[test]

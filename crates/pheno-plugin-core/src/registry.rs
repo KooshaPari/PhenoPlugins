@@ -792,4 +792,20 @@ mod tests {
         // must not reduce its size.
         assert_eq!(registry.stats().vcs_count, 5);
     }
+
+    #[test]
+    fn test_registry_send_sync() {
+        // Compile-time assertion: PluginRegistry must be Send + Sync
+        // for safe concurrent access across threads.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PluginRegistry>();
+    }
+
+    #[test]
+    fn test_registry_stats_send_sync() {
+        // RegistryStats derives Clone but we also need Send + Sync
+        // for metrics aggregation across threads.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<RegistryStats>();
+    }
 }

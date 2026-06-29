@@ -89,9 +89,9 @@ impl GitAdapter {
     }
 }
 
-// Safety: GitAdapter only stores PathBuf which is Send+Sync.
-unsafe impl Send for GitAdapter {}
-unsafe impl Sync for GitAdapter {}
+// GitAdapter only stores PathBuf, which is Send+Sync.
+// Rust auto-derives both traits — no unsafe impl needed.
+// If a non-Send field is added later, the compiler will catch it.
 
 #[async_trait]
 impl AdapterPlugin for GitAdapter {
@@ -445,7 +445,7 @@ impl VcsPlugin for GitAdapter {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(&artifact_path, content).map_err(|e| PluginError::Io(e))
+        std::fs::write(&artifact_path, content).map_err(PluginError::Io)
     }
 
     async fn artifact_exists(&self, feature_slug: &str, relative_path: &str) -> PluginResult<bool> {
@@ -501,6 +501,14 @@ impl VcsPlugin for GitAdapter {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Compile-time assertion: GitAdapter must be Send + Sync.
+    #[test]
+    fn test_git_adapter_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<GitAdapter>();
+    }
+
 
     fn create_test_repo() -> PluginResult<(TempDir, GitAdapter)> {
         let temp_dir = TempDir::new().map_err(|e| PluginError::Io(e))?;
@@ -1231,5 +1239,13 @@ mod tests {
         let _: Vec<WorktreeInfo> = worktrees;
 
         Ok(())
+    }
+
+    #[test]
+    fn test_git_adapter_pathbuf_is_send_sync() {
+        // PathBuf is auto Send+Sync in Rust. If this ever breaks
+        // due to a std change, the assertion below catches it.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<std::path::PathBuf>();
     }
 }

@@ -64,23 +64,29 @@ impl Capability {
         }
     }
 
-    /// Parse a capability from its stable string identifier.
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for Capability {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "read" => Some(Capability::Read),
-            "filesystem_read" => Some(Capability::FilesystemRead),
-            "filesystem_write" => Some(Capability::FilesystemWrite),
-            "network" => Some(Capability::Network),
-            "process" => Some(Capability::Process),
-            "working_tree" => Some(Capability::WorkingTree),
-            "storage" => Some(Capability::Storage),
-            "audit" => Some(Capability::Audit),
-            "environment" => Some(Capability::Environment),
-            "shell_exec" => Some(Capability::ShellExec),
-            _ => None,
+            "read" => Ok(Capability::Read),
+            "filesystem_read" => Ok(Capability::FilesystemRead),
+            "filesystem_write" => Ok(Capability::FilesystemWrite),
+            "network" => Ok(Capability::Network),
+            "process" => Ok(Capability::Process),
+            "working_tree" => Ok(Capability::WorkingTree),
+            "storage" => Ok(Capability::Storage),
+            "audit" => Ok(Capability::Audit),
+            "environment" => Ok(Capability::Environment),
+            "shell_exec" => Ok(Capability::ShellExec),
+            _ => Err(()),
         }
     }
+}
 
+impl Capability {
     /// All defined capabilities. Useful for tests and tooling.
     pub const ALL: &'static [Capability] = &[
         Capability::Read,
@@ -121,17 +127,17 @@ mod tests {
     fn test_capability_roundtrip() {
         for cap in Capability::ALL {
             let s = cap.as_str();
-            let parsed = Capability::from_str(s)
-                .unwrap_or_else(|| panic!("failed to parse {}", s));
+            let parsed: Capability = s.parse()
+                .unwrap_or_else(|_| panic!("failed to parse {}", s));
             assert_eq!(parsed, *cap, "roundtrip mismatch for {:?}", cap);
         }
     }
 
     #[test]
-    fn test_capability_from_str_unknown_returns_none() {
-        assert!(Capability::from_str("nope").is_none());
-        assert!(Capability::from_str("").is_none());
-        assert!(Capability::from_str("READ").is_none()); // case-sensitive
+    fn test_capability_from_str_unknown_returns_err() {
+        assert!("nope".parse::<Capability>().is_err());
+        assert!("".parse::<Capability>().is_err());
+        assert!("READ".parse::<Capability>().is_err()); // case-sensitive
     }
 
     #[test]
