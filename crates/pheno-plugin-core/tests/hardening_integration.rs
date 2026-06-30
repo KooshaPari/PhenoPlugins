@@ -176,7 +176,7 @@ fn test_capability_strings_round_trip() {
     // this pins both directions.
     for cap in Capability::ALL {
         let s = cap.as_str();
-        let parsed = Capability::from_str(s).unwrap_or_else(|| panic!("no parse for {}", s));
+        let parsed = Capability::parse(s).unwrap_or_else(|| panic!("no parse for {}", s));
         assert_eq!(parsed, *cap);
     }
 }
@@ -202,9 +202,9 @@ fn test_capability_kind_matches_manifest() {
 #[test]
 fn test_capability_unknown_string_returns_none() {
     // Pin the failure mode of `from_str` for unknown identifiers.
-    assert!(Capability::from_str("nope").is_none());
-    assert!(Capability::from_str("").is_none());
-    assert!(Capability::from_str("READ").is_none()); // case-sensitive
+    assert!(Capability::parse("nope").is_none());
+    assert!(Capability::parse("").is_none());
+    assert!(Capability::parse("READ").is_none()); // case-sensitive
 }
 
 // =============================================================================
@@ -267,7 +267,8 @@ fn test_lifecycle_can_transition_predicate_matches_transition_method() {
             let can = a.can_transition_to(b);
             let method_result = a.transition(b).is_ok();
             assert_eq!(
-                can, method_result,
+                can,
+                method_result,
                 "predicate/method mismatch for {} -> {}",
                 a.as_str(),
                 b.as_str()

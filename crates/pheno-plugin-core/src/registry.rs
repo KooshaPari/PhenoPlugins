@@ -6,11 +6,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use tracing::{debug, info, instrument, warn};
+
 use crate::error::{PluginError, PluginResult};
 use crate::traits::{StoragePlugin, VcsPlugin};
 
 /// Thread-safe plugin registry.
-/// Thread-safe plugin registry.
+///
 ///
 /// Manages registration and lookup of all adapter plugins.
 /// Uses interior mutability for concurrent access.
@@ -55,27 +57,33 @@ impl PluginRegistry {
     // -- VCS plugin management --
 
     /// Register a VCS adapter plugin.
+    #[instrument(skip(self, plugin), fields(plugin.name = tracing::field::Empty))]
     pub fn register_vcs(&self, plugin: Box<dyn VcsPlugin>) -> PluginResult<()> {
         if self.is_finalized() {
+            warn!("Attempted VCS registration after registry finalized");
             return Err(PluginError::Initialization(
                 "Registry is finalized, cannot register new plugins".to_string(),
             ));
         }
 
         let name = plugin.name().to_string();
+        tracing::Span::current().record("plugin.name", name.as_str());
+
         let mut vcs = self
             .vcs
             .write()
             .map_err(|_| PluginError::Initialization("Poisoned lock".to_string()))?;
 
         if vcs.contains_key(&name) {
+            warn!(plugin.name = %name, "Duplicate VCS plugin registration attempted");
             return Err(PluginError::AlreadyRegistered(format!(
                 "VCS plugin '{}' already registered",
                 name
             )));
         }
 
-        vcs.insert(name, Arc::from(plugin));
+        vcs.insert(name.clone(), Arc::from(plugin));
+        info!(plugin.name = %name, "VCS plugin registered");
         Ok(())
     }
 
@@ -95,27 +103,33 @@ impl PluginRegistry {
     // -- Storage plugin management --
 
     /// Register a storage adapter plugin.
+    #[instrument(skip(self, plugin), fields(plugin.name = tracing::field::Empty))]
     pub fn register_storage(&self, plugin: Box<dyn StoragePlugin>) -> PluginResult<()> {
         if self.is_finalized() {
+            warn!("Attempted storage registration after registry finalized");
             return Err(PluginError::Initialization(
                 "Registry is finalized, cannot register new plugins".to_string(),
             ));
         }
 
         let name = plugin.name().to_string();
+        tracing::Span::current().record("plugin.name", name.as_str());
+
         let mut storage = self
             .storage
             .write()
             .map_err(|_| PluginError::Initialization("Poisoned lock".to_string()))?;
 
         if storage.contains_key(&name) {
+            warn!(plugin.name = %name, "Duplicate storage plugin registration attempted");
             return Err(PluginError::AlreadyRegistered(format!(
                 "Storage plugin '{}' already registered",
                 name
             )));
         }
 
-        storage.insert(name, Arc::from(plugin));
+        storage.insert(name.clone(), Arc::from(plugin));
+        info!(plugin.name = %name, "Storage plugin registered");
         Ok(())
     }
 
@@ -135,21 +149,53 @@ impl PluginRegistry {
     // -- Health checks --
 
     /// Check health of all registered plugins.
+    #[instrument(skip(self))]
     pub async fn health_check(&self) -> PluginResult<()> {
+        let vcs_names = self.vcs_adapters();
+        let storage_names = self.storage_adapters();
+        debug!(
+            vcs_count = vcs_names.len(),
+            storage_count = storage_names.len(),
+            "Starting registry health check"
+        );
+
         // Check VCS plugins
-        for name in self.vcs_adapters() {
-            if let Some(vcs) = self.vcs(&name) {
-                vcs.health_check()?;
+        for name in &vcs_names {
+            if let Some(vcs) = self.vcs(name) {
+                match vcs.health_check() {
+                    Ok(()) => debug!(plugin.name = %name, kind = "vcs", "Health check passed"),
+                    Err(ref e) => {
+                        warn!(plugin.name = %name, kind = "vcs", error = %e, "Health check failed");
+                        return Err(PluginError::Operation(format!(
+                            "VCS plugin '{}' health check failed: {}",
+                            name, e
+                        )));
+                    }
+                }
             }
         }
 
         // Check storage plugins
-        for name in self.storage_adapters() {
-            if let Some(storage) = self.storage(&name) {
-                storage.health_check()?;
+        for name in &storage_names {
+            if let Some(storage) = self.storage(name) {
+                match storage.health_check() {
+                    Ok(()) => debug!(plugin.name = %name, kind = "storage", "Health check passed"),
+                    Err(ref e) => {
+                        warn!(plugin.name = %name, kind = "storage", error = %e, "Health check failed");
+                        return Err(PluginError::Operation(format!(
+                            "Storage plugin '{}' health check failed: {}",
+                            name, e
+                        )));
+                    }
+                }
             }
         }
 
+        info!(
+            vcs_count = vcs_names.len(),
+            storage_count = storage_names.len(),
+            "Registry health check passed"
+        );
         Ok(())
     }
 
@@ -459,10 +505,7 @@ mod tests {
         ($t:ty) => {
             #[async_trait::async_trait]
             impl StoragePlugin for $t {
-                async fn create_feature(
-                    &self,
-                    _feature: &serde_json::Value,
-                ) -> PluginResult<i64> {
+                async fn create_feature(&self, _feature: &serde_json::Value) -> PluginResult<i64> {
                     Ok(1)
                 }
                 async fn get_feature_by_slug(
@@ -477,20 +520,13 @@ mod tests {
                 ) -> PluginResult<Option<serde_json::Value>> {
                     Ok(None)
                 }
-                async fn update_feature_state(
-                    &self,
-                    _id: i64,
-                    _state: &str,
-                ) -> PluginResult<()> {
+                async fn update_feature_state(&self, _id: i64, _state: &str) -> PluginResult<()> {
                     Ok(())
                 }
                 async fn list_all_features(&self) -> PluginResult<Vec<serde_json::Value>> {
                     Ok(vec![])
                 }
-                async fn create_work_package(
-                    &self,
-                    _wp: &serde_json::Value,
-                ) -> PluginResult<i64> {
+                async fn create_work_package(&self, _wp: &serde_json::Value) -> PluginResult<i64> {
                     Ok(1)
                 }
                 async fn get_work_package(
@@ -791,5 +827,109 @@ mod tests {
         // The registry holds its own Arc references, so dropping the lookups
         // must not reduce its size.
         assert_eq!(registry.stats().vcs_count, 5);
+    }
+
+    // ============================================================================
+    // Concurrency tests — exercise Arc/RwLock behaviour under concurrent readers
+    // and a single writer per phase.  These are data-race-free regression guards:
+    // concurrent *reads* are legal; concurrent writes are serialised by the lock.
+    // ============================================================================
+
+    /// Spawn N reader threads that concurrently call `vcs()` / `storage()` /
+    /// `stats()` on a shared Arc<PluginRegistry>.  No data races should occur.
+    #[test]
+    fn test_concurrent_reads_no_data_race() {
+        use std::thread;
+
+        let registry = Arc::new(PluginRegistry::new());
+        for i in 0..10 {
+            registry
+                .register_vcs(Box::new(NamedVcsPlugin::new(&format!("vcs-{}", i))))
+                .unwrap();
+            registry
+                .register_storage(Box::new(NamedStoragePlugin::new(&format!("storage-{}", i))))
+                .unwrap();
+        }
+        registry.finalize().unwrap();
+
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let r = Arc::clone(&registry);
+                thread::spawn(move || {
+                    for i in 0..10 {
+                        let name = format!("vcs-{}", i % 10);
+                        let _ = r.vcs(&name);
+                        let _ = r.storage(&format!("storage-{}", i % 10));
+                        let _ = r.stats();
+                        // Attempt a registration while finalized — must be Err, not panic.
+                        let res = r.register_vcs(Box::new(NamedVcsPlugin::new(&format!(
+                            "concurrent-attempt-{}-{}",
+                            t, i
+                        ))));
+                        assert!(res.is_err(), "registration after finalize must fail");
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("reader thread panicked");
+        }
+
+        // No extra plugins should have been added.
+        assert_eq!(registry.stats().vcs_count, 10);
+        assert_eq!(registry.stats().storage_count, 10);
+    }
+
+    /// Two threads register distinct plugins concurrently on a non-finalized
+    /// registry.  Both sets must be present after both threads complete.
+    #[test]
+    fn test_concurrent_writes_distinct_names_both_land() {
+        use std::thread;
+
+        let registry = Arc::new(PluginRegistry::new());
+
+        // Thread A registers vcs-a-{0..9}.
+        let r_a = Arc::clone(&registry);
+        let ha = thread::spawn(move || {
+            for i in 0..10 {
+                r_a.register_vcs(Box::new(NamedVcsPlugin::new(&format!("vcs-a-{}", i))))
+                    .unwrap();
+            }
+        });
+
+        // Thread B registers vcs-b-{0..9}.
+        let r_b = Arc::clone(&registry);
+        let hb = thread::spawn(move || {
+            for i in 0..10 {
+                r_b.register_vcs(Box::new(NamedVcsPlugin::new(&format!("vcs-b-{}", i))))
+                    .unwrap();
+            }
+        });
+
+        ha.join().expect("thread A panicked");
+        hb.join().expect("thread B panicked");
+
+        assert_eq!(registry.stats().vcs_count, 20);
+        for i in 0..10 {
+            assert!(registry.vcs(&format!("vcs-a-{}", i)).is_some());
+            assert!(registry.vcs(&format!("vcs-b-{}", i)).is_some());
+        }
+    }
+
+    /// Verify that `registry.vcs()` returns a cloneable `Arc` whose ref-count
+    /// outlives the registry's own scope (i.e., ownership via Arc is sound).
+    #[test]
+    fn test_arc_plugin_lifetime_outlives_registry_drop() {
+        let kept_arc = {
+            let registry = PluginRegistry::new();
+            registry
+                .register_vcs(Box::new(NamedVcsPlugin::new("ephemeral")))
+                .unwrap();
+            // Clone the Arc out of the registry before it drops.
+            registry.vcs("ephemeral").expect("plugin must exist")
+        };
+        // Registry dropped here — the Arc we cloned must still be valid.
+        assert_eq!(kept_arc.name(), "ephemeral");
     }
 }
