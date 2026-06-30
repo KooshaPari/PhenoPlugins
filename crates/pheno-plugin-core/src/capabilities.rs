@@ -20,9 +20,7 @@ use serde::{Deserialize, Serialize};
 /// documentation. We intentionally avoid per-method capability flags because
 /// that would balloon the enum to dozens of variants and defeat the goal of
 /// a quick, human-readable manifest review.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
     /// Read-only access to host resources (no writes, no network).
@@ -65,7 +63,7 @@ impl Capability {
     }
 
     /// Parse a capability from its stable string identifier.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "read" => Some(Capability::Read),
             "filesystem_read" => Some(Capability::FilesystemRead),
@@ -121,17 +119,16 @@ mod tests {
     fn test_capability_roundtrip() {
         for cap in Capability::ALL {
             let s = cap.as_str();
-            let parsed = Capability::from_str(s)
-                .unwrap_or_else(|| panic!("failed to parse {}", s));
+            let parsed = Capability::parse(s).unwrap_or_else(|| panic!("failed to parse {}", s));
             assert_eq!(parsed, *cap, "roundtrip mismatch for {:?}", cap);
         }
     }
 
     #[test]
     fn test_capability_from_str_unknown_returns_none() {
-        assert!(Capability::from_str("nope").is_none());
-        assert!(Capability::from_str("").is_none());
-        assert!(Capability::from_str("READ").is_none()); // case-sensitive
+        assert!(Capability::parse("nope").is_none());
+        assert!(Capability::parse("").is_none());
+        assert!(Capability::parse("READ").is_none()); // case-sensitive
     }
 
     #[test]

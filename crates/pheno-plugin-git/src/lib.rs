@@ -445,7 +445,7 @@ impl VcsPlugin for GitAdapter {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(&artifact_path, content).map_err(|e| PluginError::Io(e))
+        std::fs::write(&artifact_path, content).map_err(PluginError::Io)
     }
 
     async fn artifact_exists(&self, feature_slug: &str, relative_path: &str) -> PluginResult<bool> {
@@ -524,9 +524,7 @@ mod tests {
 
         // Local git identity so signatures are valid.
         let mut config = repo.config().map_err(git_err)?;
-        config
-            .set_str("user.name", "Test User")
-            .map_err(git_err)?;
+        config.set_str("user.name", "Test User").map_err(git_err)?;
         config
             .set_str("user.email", "test@example.com")
             .map_err(git_err)?;
@@ -650,7 +648,10 @@ mod tests {
                 PluginError::Operation("op_payload".to_string()),
                 "op_payload",
             ),
-            (PluginError::Config("cfg_payload".to_string()), "cfg_payload"),
+            (
+                PluginError::Config("cfg_payload".to_string()),
+                "cfg_payload",
+            ),
             (
                 PluginError::Execution("exec_payload".to_string()),
                 "exec_payload",
@@ -805,8 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_branch_and_list() {
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         // `create_branch` is the simple sanity check.
         adapter
@@ -840,12 +840,9 @@ mod tests {
         // side effect (the `create_dir_all` happens *before* the
         // failing `wt_repo.branch(...)` call), and (c) that
         // `cleanup_worktree` succeeds and removes that path.
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
-        let result = adapter
-            .create_worktree("test-feature", "WP1")
-            .await;
+        let result = adapter.create_worktree("test-feature", "WP1").await;
         assert!(
             result.is_err(),
             "create_worktree should error (cross-repo bug): {:?}",
@@ -900,9 +897,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_artifact_for_missing_file() {
         let (_dir, adapter) = create_test_repo().expect("test repo should init");
-        let result = adapter
-            .read_artifact("nope-feature", "missing.txt")
-            .await;
+        let result = adapter.read_artifact("nope-feature", "missing.txt").await;
         match result {
             Err(PluginError::NotFound(_)) => {}
             Err(other) => panic!("expected PluginError::NotFound, got: {:?}", other),
@@ -974,8 +969,7 @@ mod tests {
     #[tokio::test]
     async fn test_detect_conflicts_no_diff() {
         // A branch compared against itself must produce an empty diff.
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         let conflicts = adapter
             .detect_conflicts("main", "main")
@@ -990,8 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkout_branch_round_trip() -> PluginResult<()> {
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         // Create a feature branch off main.
         adapter
@@ -1082,8 +1075,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_merge_to_target_no_conflict() -> PluginResult<()> {
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         // Create a feature branch off main.
         adapter
@@ -1133,8 +1125,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_branch_with_nonexistent_base() -> PluginResult<()> {
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         let result = adapter
             .create_branch("feature-z", "nonexistent-branch")
@@ -1209,8 +1200,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_worktrees_after_create() -> PluginResult<()> {
-        let (_dir, adapter) =
-            create_test_repo_with_commit().expect("repo with commit should init");
+        let (_dir, adapter) = create_test_repo_with_commit().expect("repo with commit should init");
 
         // Try to create a worktree. The current `create_worktree`
         // implementation has a known cross-repo bug and returns Err,

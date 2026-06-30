@@ -43,7 +43,7 @@ impl PluginKind {
     }
 
     /// Parse a plugin kind from its stable string identifier.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "vcs" => Some(PluginKind::Vcs),
             "storage" => Some(PluginKind::Storage),
@@ -160,7 +160,7 @@ impl PluginManifest {
                     "duplicate capability: {:?}",
                     cap
                 )));
-        }
+            }
         }
 
         for dep in &self.depends_on {
@@ -233,10 +233,7 @@ mod tests {
     fn test_duplicate_capability_rejected() {
         let m = PluginManifest::new("dup", "0.1.0", PluginKind::Generic)
             .unwrap()
-            .with_capabilities(vec![
-                Capability::Network,
-                Capability::Network,
-            ]);
+            .with_capabilities(vec![Capability::Network, Capability::Network]);
         let err = m.validate();
         assert!(err.is_err(), "duplicate capability should fail");
     }
@@ -316,10 +313,10 @@ mod tests {
     fn test_plugin_kind_roundtrip() {
         for k in [PluginKind::Vcs, PluginKind::Storage, PluginKind::Generic] {
             let s = k.as_str();
-            let parsed = PluginKind::from_str(s).unwrap();
+            let parsed = PluginKind::parse(s).unwrap();
             assert_eq!(parsed, k);
         }
-        assert!(PluginKind::from_str("not-a-kind").is_none());
+        assert!(PluginKind::parse("not-a-kind").is_none());
     }
 
     #[test]

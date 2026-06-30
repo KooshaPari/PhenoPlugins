@@ -2,6 +2,88 @@
 
 use thiserror::Error;
 
+/// Machine-readable error codes for programmatic handling by host adapters.
+///
+/// Every `PluginError` variant maps to exactly one `ErrorCode`. Host adapters
+/// and test code can match on the code without parsing the human-readable
+/// message string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorCode {
+    /// PLUGIN_INIT_001 — adapter constructor or migration failed.
+    Initialization,
+    /// PLUGIN_REG_002 — named plugin not present in registry.
+    NotFound,
+    /// PLUGIN_REG_003 — name collision during registration.
+    AlreadyRegistered,
+    /// PLUGIN_STORE_004 — entity uniqueness constraint violated.
+    AlreadyExists,
+    /// PLUGIN_OPS_005 — generic runtime operation failure.
+    Operation,
+    /// PLUGIN_CFG_006 — adapter configuration schema violation.
+    Config,
+    /// PLUGIN_IO_007 — underlying I/O error.
+    Io,
+    /// PLUGIN_SER_008 — JSON serialization/deserialization failure.
+    Serialization,
+    /// PLUGIN_EXEC_009 — plugin execution-time error.
+    Execution,
+    /// PLUGIN_VAL_010 — input validation failure.
+    Validation,
+}
+
+impl ErrorCode {
+    /// Returns the stable string token used in logs and structured error
+    /// payloads (e.g. `"PLUGIN_INIT_001"`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::Initialization => "PLUGIN_INIT_001",
+            ErrorCode::NotFound => "PLUGIN_REG_002",
+            ErrorCode::AlreadyRegistered => "PLUGIN_REG_003",
+            ErrorCode::AlreadyExists => "PLUGIN_STORE_004",
+            ErrorCode::Operation => "PLUGIN_OPS_005",
+            ErrorCode::Config => "PLUGIN_CFG_006",
+            ErrorCode::Io => "PLUGIN_IO_007",
+            ErrorCode::Serialization => "PLUGIN_SER_008",
+            ErrorCode::Execution => "PLUGIN_EXEC_009",
+            ErrorCode::Validation => "PLUGIN_VAL_010",
+        }
+    }
+
+    /// Returns a short human-readable recovery hint that host adapters may
+    /// surface to operators. Callers SHOULD check the error message for
+    /// additional context-specific detail.
+    pub fn recovery_hint(self) -> &'static str {
+        match self {
+            ErrorCode::Initialization => {
+                "Check adapter config, file permissions, and database path."
+            }
+            ErrorCode::NotFound => "Register the required plugin before calling lookup methods.",
+            ErrorCode::AlreadyRegistered => {
+                "Each plugin name must be unique; remove the duplicate registration."
+            }
+            ErrorCode::AlreadyExists => "Use an update operation or choose a different identifier.",
+            ErrorCode::Operation => {
+                "Inspect error detail; retry if transient, report if persistent."
+            }
+            ErrorCode::Config => "Verify adapter_config against the plugin's configuration schema.",
+            ErrorCode::Io => "Check filesystem permissions, disk space, and file locks.",
+            ErrorCode::Serialization => {
+                "Ensure JSON payload matches the expected schema; check for encoding issues."
+            }
+            ErrorCode::Execution => "Inspect error detail; the adapter may need re-initialization.",
+            ErrorCode::Validation => {
+                "Correct the input data according to the field-level error message."
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Errors that can occur in plugin operations.
 #[derive(Error, Debug)]
 pub enum PluginError {
@@ -34,6 +116,42 @@ pub enum PluginError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+}
+
+impl PluginError {
+    /// Returns the machine-readable `ErrorCode` for this error variant.
+    ///
+    /// Use this in structured log events and programmatic error handling
+    /// instead of matching on display strings.
+    ///
+    /// ```rust
+    /// use pheno_plugin_core::error::{ErrorCode, PluginError};
+    ///
+    /// let e = PluginError::NotFound("git".into());
+    /// assert_eq!(e.code(), ErrorCode::NotFound);
+    /// assert_eq!(e.code().as_str(), "PLUGIN_REG_002");
+    /// ```
+    pub fn code(&self) -> ErrorCode {
+        match self {
+            PluginError::Initialization(_) => ErrorCode::Initialization,
+            PluginError::NotFound(_) => ErrorCode::NotFound,
+            PluginError::AlreadyRegistered(_) => ErrorCode::AlreadyRegistered,
+            PluginError::AlreadyExists(_) => ErrorCode::AlreadyExists,
+            PluginError::Operation(_) => ErrorCode::Operation,
+            PluginError::Config(_) => ErrorCode::Config,
+            PluginError::Io(_) => ErrorCode::Io,
+            PluginError::Serialization(_) => ErrorCode::Serialization,
+            PluginError::Execution(_) => ErrorCode::Execution,
+            PluginError::Validation(_) => ErrorCode::Validation,
+        }
+    }
+
+    /// Returns the recovery hint for this error's code.
+    ///
+    /// Convenience wrapper over `self.code().recovery_hint()`.
+    pub fn recovery_hint(&self) -> &'static str {
+        self.code().recovery_hint()
+    }
 }
 
 /// Result type alias for plugin operations.
@@ -295,5 +413,130 @@ mod tests {
             Err(std::io::Error::new(std::io::ErrorKind::Other, "x"));
         let mapped: PluginResult<i32> = r.map_err(|e| e.into());
         assert!(mapped.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // ErrorCode tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_error_code_variants_all_unique_tokens() {
+        // Every ErrorCode must produce a distinct stable string token.
+        use std::collections::HashSet;
+        let codes = [
+            ErrorCode::Initialization,
+            ErrorCode::NotFound,
+            ErrorCode::AlreadyRegistered,
+            ErrorCode::AlreadyExists,
+            ErrorCode::Operation,
+            ErrorCode::Config,
+            ErrorCode::Io,
+            ErrorCode::Serialization,
+            ErrorCode::Execution,
+            ErrorCode::Validation,
+        ];
+        let tokens: HashSet<&str> = codes.iter().map(|c| c.as_str()).collect();
+        assert_eq!(
+            tokens.len(),
+            codes.len(),
+            "every ErrorCode must have a unique as_str() token"
+        );
+    }
+
+    #[test]
+    fn test_error_code_display_equals_as_str() {
+        let code = ErrorCode::NotFound;
+        assert_eq!(format!("{}", code), code.as_str());
+    }
+
+    #[test]
+    fn test_error_code_recovery_hints_non_empty() {
+        let codes = [
+            ErrorCode::Initialization,
+            ErrorCode::NotFound,
+            ErrorCode::AlreadyRegistered,
+            ErrorCode::AlreadyExists,
+            ErrorCode::Operation,
+            ErrorCode::Config,
+            ErrorCode::Io,
+            ErrorCode::Serialization,
+            ErrorCode::Execution,
+            ErrorCode::Validation,
+        ];
+        for code in codes {
+            let hint = code.recovery_hint();
+            assert!(
+                !hint.is_empty(),
+                "recovery_hint for {:?} must not be empty",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn test_plugin_error_code_method_maps_all_variants() {
+        let bad: serde_json::Error = serde_json::from_str::<i32>("bad").unwrap_err();
+        let io = std::io::Error::new(std::io::ErrorKind::Other, "x");
+
+        let cases: Vec<(PluginError, ErrorCode)> = vec![
+            (
+                PluginError::Initialization("x".into()),
+                ErrorCode::Initialization,
+            ),
+            (PluginError::NotFound("x".into()), ErrorCode::NotFound),
+            (
+                PluginError::AlreadyRegistered("x".into()),
+                ErrorCode::AlreadyRegistered,
+            ),
+            (
+                PluginError::AlreadyExists("x".into()),
+                ErrorCode::AlreadyExists,
+            ),
+            (PluginError::Operation("x".into()), ErrorCode::Operation),
+            (PluginError::Config("x".into()), ErrorCode::Config),
+            (PluginError::Io(io), ErrorCode::Io),
+            (PluginError::Serialization(bad), ErrorCode::Serialization),
+            (PluginError::Execution("x".into()), ErrorCode::Execution),
+            (PluginError::Validation("x".into()), ErrorCode::Validation),
+        ];
+        for (err, expected_code) in cases {
+            assert_eq!(err.code(), expected_code, "wrong code for {:?}", err);
+        }
+    }
+
+    #[test]
+    fn test_plugin_error_recovery_hint_non_empty_for_all_variants() {
+        let bad: serde_json::Error = serde_json::from_str::<i32>("bad").unwrap_err();
+        let io = std::io::Error::new(std::io::ErrorKind::Other, "x");
+
+        let errors: Vec<PluginError> = vec![
+            PluginError::Initialization("x".into()),
+            PluginError::NotFound("x".into()),
+            PluginError::AlreadyRegistered("x".into()),
+            PluginError::AlreadyExists("x".into()),
+            PluginError::Operation("x".into()),
+            PluginError::Config("x".into()),
+            PluginError::Io(io),
+            PluginError::Serialization(bad),
+            PluginError::Execution("x".into()),
+            PluginError::Validation("x".into()),
+        ];
+        for err in errors {
+            assert!(
+                !err.recovery_hint().is_empty(),
+                "recovery_hint must not be empty for {:?}",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_error_code_copy_clone() {
+        // ErrorCode must be Copy+Clone so callers can store and compare it cheaply.
+        let code = ErrorCode::Validation;
+        let cloned = code;
+        let copied = code;
+        assert_eq!(cloned, copied);
+        assert_eq!(code.as_str(), cloned.as_str());
     }
 }
