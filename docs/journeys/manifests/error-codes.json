@@ -1,0 +1,32 @@
+{
+  "schema": "journey-manifest/v1",
+  "id": "error-codes",
+  "title": "Typed error codes and recovery hints",
+  "actor": "Host application error handler",
+  "goal": "Map PluginError to structured error response without parsing message strings",
+  "crates": ["pheno-plugin-core"],
+  "steps": [
+    {
+      "step": 1,
+      "action": "Receive PluginError from any trait method",
+      "assertion": "err.code() returns the correct ErrorCode variant"
+    },
+    {
+      "step": 2,
+      "action": "err.code().as_str()",
+      "assertion": "returns a stable string token like \"PLUGIN_REG_002\""
+    },
+    {
+      "step": 3,
+      "action": "err.recovery_hint()",
+      "assertion": "returns a non-empty human-readable remediation string"
+    },
+    {
+      "step": 4,
+      "action": "Each PluginError variant maps to a unique ErrorCode",
+      "assertion": "10 variants, 10 distinct ErrorCode values, 10 distinct as_str() tokens"
+    }
+  ],
+  "test_file": "crates/pheno-plugin-core/src/error.rs#tests",
+  "evidence_status": "covered_by_unit_tests"
+}

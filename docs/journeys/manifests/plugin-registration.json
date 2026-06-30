@@ -1,0 +1,47 @@
+{
+  "schema": "journey-manifest/v1",
+  "id": "plugin-registration",
+  "title": "Register and look up a VCS plugin",
+  "actor": "Host application developer",
+  "goal": "Register a Git adapter via PluginRegistry and verify round-trip lookup",
+  "crates": ["pheno-plugin-core", "pheno-plugin-git"],
+  "steps": [
+    {
+      "step": 1,
+      "action": "Instantiate PluginRegistry::new()",
+      "assertion": "registry.is_finalized() == false"
+    },
+    {
+      "step": 2,
+      "action": "register_vcs(Box::new(GitPlugin::new(repo_path)))",
+      "assertion": "returns Ok(())"
+    },
+    {
+      "step": 3,
+      "action": "register_vcs with same name again",
+      "assertion": "returns Err(AlreadyRegistered); code == ErrorCode::AlreadyRegistered"
+    },
+    {
+      "step": 4,
+      "action": "registry.finalize()",
+      "assertion": "registry.is_finalized() == true"
+    },
+    {
+      "step": 5,
+      "action": "register_vcs after finalize",
+      "assertion": "returns Err(Initialization)"
+    },
+    {
+      "step": 6,
+      "action": "registry.vcs(\"git\")",
+      "assertion": "returns Some(arc); arc.name() == \"git\""
+    },
+    {
+      "step": 7,
+      "action": "registry.health_check().await",
+      "assertion": "returns Ok(())"
+    }
+  ],
+  "test_file": "crates/pheno-plugin-core/src/registry.rs#tests",
+  "evidence_status": "covered_by_unit_tests"
+}
