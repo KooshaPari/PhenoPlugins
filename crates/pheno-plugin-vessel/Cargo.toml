@@ -23,7 +23,12 @@ tokio-test = "0.4"
 criterion = { version = "0.8", features = ["html_reports"] }
 pheno-plugin-core = { path = "../pheno-plugin-core" }
 serde_json = "1.0"
+cucumber = "0.21"
 
 [[bench]]
 name = "perf"
 harness = false
+
+[[test]]
+name = "bdd"
+path = "tests/bdd.rs"
