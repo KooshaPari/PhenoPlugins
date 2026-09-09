@@ -48,6 +48,7 @@ panic at build time if the update is incomplete.
 **Status:** SCAFFOLD
 
 **Test Traces:**
+
 - `crates/pheno-plugin-core/tests/lifecycle_fixture_oracle.rs::test_fixture_schema_is_well_formed` — pins 5 states, 5×5 = 25 rows, no duplicates or missing cells.
 - `crates/pheno-plugin-core/tests/lifecycle_fixture_oracle.rs::test_fixture_allowed_transitions_pass_in_code` — positive oracle: every `allowed: true` cell succeeds in `can_transition_to` and `transition()`.
 - `crates/pheno-plugin-core/tests/lifecycle_fixture_oracle.rs::test_fixture_forbidden_transitions_rejected_in_code` — negative oracle: every `allowed: false` cell returns `PluginError::Validation(_)` carrying `ErrorCode::Validation`, with a display message naming both endpoints.
