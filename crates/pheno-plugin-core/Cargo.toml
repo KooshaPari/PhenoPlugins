@@ -17,3 +17,9 @@ thiserror = "2.0"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
+
+[dev-dependencies]
+# serde_json is already in [dependencies], but listing it here as a
+# dev-dep makes it explicit that fixture-driven tests under `tests/`
+# depend on it. This keeps the public runtime surface small while
+# allowing integration tests to parse JSON fixtures.
