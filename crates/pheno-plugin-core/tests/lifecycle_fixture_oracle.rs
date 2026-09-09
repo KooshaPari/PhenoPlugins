@@ -1,6 +1,6 @@
 //! Fixture-driven oracle for `pheno_plugin_core::lifecycle::PluginState`.
 //!
-//! The 5x5 transition table is duplicated as a JSON fixture under
+//! The 5×5 transition table is duplicated as a JSON fixture under
 //! `tests/fixtures/lifecycle_state_machine.json` so that downstream plugin
 //! authors (and this crate's own consumers) can consume the contract as
 //! data — useful for code generation, conformance suites, and static
@@ -19,16 +19,39 @@
 //!    state-machine diagrams or migration guides without having to
 //!    scrape Rust source.
 //!
-//! Traces to: `crates/pheno-plugin-core/src/lifecycle.rs`. Adding a new
-//! `PluginState` variant requires updating both the in-code `matches!`
-//! in `can_transition_to` AND this fixture (5 new rows). The fixture
-//! loader also asserts the row count matches the state count squared,
-//! so a missed row causes a build-time failure.
+//! Adding a new `PluginState` variant requires updating both the in-code
+//! `matches!` in `can_transition_to` AND this fixture (5 new rows). The
+//! fixture loader also asserts the row count matches the state count
+//! squared, so a missed row causes a build-time failure.
+//!
+//! ## Docstring coverage
+//!
+//! Every public item the fixture depends on is exercised by at least
+//! one test below:
+//!
+//! | Symbol                        | Test                                       |
+//! |-------------------------------|--------------------------------------------|
+//! | `PluginState` (variants)      | `test_fixture_schema_is_well_formed`       |
+//! | `PluginState::as_str`         | `test_fixture_forbidden_transitions_*`     |
+//! | `PluginState::can_transition_to` | `test_fixture_predicate_and_method_*`   |
+//! | `PluginState::transition`     | `test_fixture_predicate_and_method_*`      |
+//! | `PluginError` (Display)       | `test_fixture_forbidden_transitions_*`     |
+//! | `PluginError::Validation`     | `test_fixture_forbidden_transitions_*`     |
+//! | `PluginError::code`           | `test_fixture_forbidden_transitions_*`     |
+//! | `ErrorCode::Validation`       | `test_fixture_forbidden_transitions_*`     |
+//! | `serde_json` (deserialize)   | `test_fixture_schema_is_well_formed`       |
+//! | `std::fs::read_to_string`     | `load_fixture` (used by every test)        |
+//!
+//! ## Traceability
+//!
+//! Traces to: FR-PHENOPLUGINS-007 (lifecycle state-machine contract).
+//! See `docs/FUNCTIONAL_REQUIREMENTS.md` for the requirement definition.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use pheno_plugin_core::error::{ErrorCode, PluginError};
 use pheno_plugin_core::lifecycle::PluginState;
 use serde::Deserialize;
 
@@ -78,8 +101,12 @@ fn load_fixture() -> Fixture {
         .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
 }
 
-// Validate the fixture schema itself so a malformed fixture fails with
-// a clear message before any state-machine assertions run.
+/// Validate the fixture schema itself so a malformed fixture fails with
+/// a clear message before any state-machine assertions run.
+///
+/// This pins the **public surface** of the contract: 5 states, a 5×5
+/// matrix, exactly one row per (from, to) cell, with both endpoints
+/// referencing declared states. Traces to: FR-PHENOPLUGINS-007.
 #[test]
 fn test_fixture_schema_is_well_formed() {
     let fixture = load_fixture();
@@ -136,8 +163,11 @@ fn test_fixture_schema_is_well_formed() {
     );
 }
 
-// Positive oracle: every row where `allowed: true` must succeed in
-// `can_transition_to` AND `transition`.
+/// Positive oracle: every row where `allowed: true` must succeed in
+/// `can_transition_to` AND `transition`, and `transition` must return
+/// the target state.
+///
+/// Traces to: FR-PHENOPLUGINS-007 (positive half).
 #[test]
 fn test_fixture_allowed_transitions_pass_in_code() {
     let fixture = load_fixture();
@@ -187,11 +217,16 @@ fn test_fixture_allowed_transitions_pass_in_code() {
     );
 }
 
-// Negative oracle: every row where `allowed: false` must FAIL in both
-// `can_transition_to` and `transition`. This is the core of the
-// negative fixture oracle: an agent that relaxes the state machine
-// (e.g. by adding a backward transition) breaks this test with a
-// precise cell-level message.
+/// Negative oracle: every row where `allowed: false` must FAIL in both
+/// `can_transition_to` and `transition`. This is the core of the
+/// negative fixture oracle: an agent that relaxes the state machine
+/// (e.g. by adding a backward transition) breaks this test with a
+/// precise cell-level message.
+///
+/// Pins `PluginError::Validation(String)` as the variant returned for
+/// every illegal transition, and `ErrorCode::Validation` as the
+/// machine-readable code consumers can branch on. Traces to:
+/// FR-PHENOPLUGINS-007 (negative half).
 #[test]
 fn test_fixture_forbidden_transitions_rejected_in_code() {
     let fixture = load_fixture();
@@ -222,10 +257,26 @@ fn test_fixture_forbidden_transitions_rejected_in_code() {
             row.rationale,
         );
 
-        let err = result.unwrap_err().to_string();
+        // Type-narrow the error: must be the `Validation` variant (not
+        // `Operation`, `Config`, etc.), with the documented machine-
+        // readable code. This guards against an agent whose
+        // "regression fix" silently changes the error variant.
+        let err: PluginError = result.unwrap_err();
         assert!(
-            err.contains(state_label(from)) && err.contains(state_label(to)),
-            "error message for {} -> {} must mention both states, got: {err}",
+            matches!(err, PluginError::Validation(_)),
+            "illegal transition must surface as PluginError::Validation, got {err:?}",
+        );
+        assert_eq!(
+            err.code(),
+            ErrorCode::Validation,
+            "illegal transition must carry ErrorCode::Validation, got {:?}",
+            err.code(),
+        );
+
+        let displayed = err.to_string();
+        assert!(
+            displayed.contains(state_label(from)) && displayed.contains(state_label(to)),
+            "error message for {} -> {} must mention both states, got: {displayed}",
             state_label(from),
             state_label(to),
         );
@@ -239,12 +290,13 @@ fn test_fixture_forbidden_transitions_rejected_in_code() {
         "expected at least 15 forbidden transitions, got {forbidden_count}"
     );
 }
-
-// Coherence oracle: the in-code `transition` method must agree with the
-// `can_transition_to` predicate for every (from, to) pair, regardless
-// of what the fixture says. This catches the class of bug where the
-// predicate and the method diverge (e.g. a refactor that updates one
-// but not the other).
+/// Coherence oracle: the in-code `transition` method must agree with the
+/// `can_transition_to` predicate for every (from, to) pair, regardless
+/// of what the fixture says. This catches the class of bug where the
+/// predicate and the method diverge (e.g. a refactor that updates one
+/// but not the other).
+///
+/// Traces to: FR-PHENOPLUGINS-007 (coherence half).
 #[test]
 fn test_fixture_predicate_and_method_agree_for_every_cell() {
     let fixture = load_fixture();
